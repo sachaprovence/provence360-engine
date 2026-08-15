@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { loadDotEnv, tenants } from "@provence360/database";
+import { loadDotEnv, pages, properties, sites, tenants } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
 
 // These E2E tests run against the seeded dev database (`pnpm db:seed`),
@@ -29,6 +29,36 @@ export async function tenantIdBySlug(slug: string): Promise<string> {
     throw new Error(
       `Tenant "${slug}" was not found — run \`pnpm db:seed\` against the dev database before running these E2E tests.`,
     );
+  }
+  return row.id;
+}
+
+export async function siteIdBySlug(slug: string): Promise<string> {
+  const [row] = await getAdminDb().select({ id: sites.id }).from(sites).where(eq(sites.slug, slug));
+  if (!row) {
+    throw new Error(`Site "${slug}" was not found — run \`pnpm db:seed\` first.`);
+  }
+  return row.id;
+}
+
+export async function propertyIdBySlug(slug: string): Promise<string> {
+  const [row] = await getAdminDb()
+    .select({ id: properties.id })
+    .from(properties)
+    .where(eq(properties.slug, slug));
+  if (!row) {
+    throw new Error(`Property "${slug}" was not found — run \`pnpm db:seed\` first.`);
+  }
+  return row.id;
+}
+
+export async function homePageIdForSite(siteId: string): Promise<string> {
+  const [row] = await getAdminDb()
+    .select({ id: pages.id })
+    .from(pages)
+    .where(eq(pages.siteId, siteId));
+  if (!row) {
+    throw new Error(`No page found for site "${siteId}" — run \`pnpm db:seed\` first.`);
   }
   return row.id;
 }

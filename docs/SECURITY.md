@@ -27,7 +27,7 @@ mocked auth.
 
 ## Defense in depth
 
-Four independent layers, each capable of stopping a cross-tenant read on
+Five independent layers, each capable of stopping a cross-tenant read on
 its own:
 
 1. **Application context** (`packages/tenant/src/context.ts`) — an
@@ -36,7 +36,8 @@ its own:
    nothing stops a bug from calling the database without ever consulting
    it.
 2. **Repository/service tenant-awareness** — every repository function in
-   `packages/sites` and `packages/domains` filters explicitly by
+   `packages/sites`, `packages/domains`, and (new in v0.3)
+   `packages/rentals`/`packages/content` filters explicitly by
    `tenant_id`, derived via `requireCurrentTenantId()`, and _never_ accepts
    a `tenantId` argument from its caller. A repository function cannot be
    tricked into using the wrong tenant by a caller passing the wrong value,
@@ -44,20 +45,31 @@ its own:
 3. **PostgreSQL Row-Level Security** — the actual, unconditional backstop.
    Enforced by Postgres itself on every query issued through the app role,
    independent of whether layers 1–2 were even reached. See below.
-4. **Explicit tests** — `packages/tenant`, `packages/domains`,
-   `packages/sites`, and `packages/observability` each carry tests that
-   create two real tenants in a real Postgres database and assert one
-   cannot read, update, or delete the other's rows. See
-   [Testing](#how-the-tests-actually-exercise-rls) below.
+4. **Composite foreign keys** (new in v0.3) — every child table added in
+   this phase (`properties`, `units`, `unit_amenities`, `pages`) carries a
+   foreign key on `(tenant_id, parent_id)` against its parent's own
+   `UNIQUE (tenant_id, id)` index, not just a plain `parent_id` FK. A row
+   whose `tenant_id` doesn't match its parent's owner is rejected by
+   Postgres at `INSERT`/`UPDATE` time (`23503`) — before RLS's `WITH
+CHECK` is even evaluated. See
+   [docs/SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls](SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls)
+   and [ADR 0010](adr/0010-property-unit-ownership.md).
+5. **Explicit tests** — `packages/tenant`, `packages/domains`,
+   `packages/sites`, `packages/observability`, and (new in v0.3)
+   `packages/rentals`, `packages/content`, `packages/renderer` each carry
+   tests that create two real tenants in a real Postgres database and
+   assert one cannot read, update, delete, or attach to the other's rows —
+   including via a forged foreign key, bypassing the repository helper
+   entirely. See [Testing](#how-the-tests-actually-exercise-rls) below.
 
 Layers 1 and 2 are conventions enforced by code review and TypeScript's
 type system where possible (e.g. repository functions have no `tenantId`
-parameter to misuse) — they are not hard technical barriers. Layer 3 is.
-If layers 1–2 vanished entirely tomorrow, layer 3 alone would still hold
-the boundary — the "RLS rejects an insert whose tenant_id doesn't match
-the active context, even bypassing the repository helper" test in
-`packages/sites/src/site-repository.test.ts` exists specifically to prove
-that.
+parameter to misuse) — they are not hard technical barriers. Layers 3 and
+4 are. If layers 1–2 vanished entirely tomorrow, layer 3 alone would still
+hold the boundary — the "RLS rejects an insert whose tenant_id doesn't
+match the active context, even bypassing the repository helper" test in
+`packages/sites/src/site-repository.test.ts` (and its v0.3 counterparts in
+`packages/rentals`/`packages/content`) exists specifically to prove that.
 
 ## The four roles
 
@@ -121,6 +133,51 @@ Defined in `packages/database/src/schema.ts`, next to each table:
 - **`sessions`** — one policy, `auth_manage_sessions`, `FOR ALL` to `provence360_auth` only. `provence360_app` has no grant on this table whatsoever (not even a denying RLS policy is needed — there's nothing to authorize in the first place). See [ADR 0007](adr/0007-session-strategy.md).
 - **`sites`, `domains`** additionally carry a second, `SELECT`-only, `USING (true)` policy granted to `provence360_resolver` — see [the four roles](#the-four-roles).
 - **`memberships`, `tenants`** additionally carry a `SELECT`-only policy granted to `provence360_auth` (`auth_read_memberships`/`auth_read_tenants`) — the read side of `getMembership()`/`listMembershipsForUser()`, which have to run before `withTenantContext` can open. Membership _mutations_ never go through this role; they go through `packages/auth/src/membership-repository.ts`, tenant-scoped and permission-checked, exactly like `sites`/`domains`.
+- **`properties`, `units`, `unit_amenities`, `media_assets`, `pages`** (v0.3) — `tenant_id = current_setting('app.tenant_id', true)::uuid`, same `FOR ALL`/`USING`+`WITH CHECK` shape as `sites`/`domains`, each additionally backstopped by the composite-FK layer described above.
+- **`themes`, `amenities`** (v0.3) — platform-level catalogs, not tenant-scoped at all. Both carry a permissive `SELECT`-only, `USING (true)` policy granted to `provence360_app` (every tenant reads the same rows) and **no write grant whatsoever** for that role — writes are reserved for the table-owning admin role, exactly the `sites`/`domains` resolver-role pattern applied to writes instead of reads. See [ADR 0011](adr/0011-theme-token-model.md) and [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
+
+## v0.3 adversarial review
+
+Section 48 of the v0.3 brief calls for attacking the system directly
+(cross-tenant Media/Page/Property/Unit references, invalid block JSON,
+unknown block versions, type spoofing, dangerous URLs, XSS, slug
+path-traversal, forged admin mutations, insufficient permission, tenant
+leak via the renderer) and requires any real finding to be both fixed and
+given a regression test. Two real issues were found and fixed during this
+phase:
+
+1. **Protocol-relative URL bypass in `safeHrefSchema`.** The initial
+   implementation of the href allowlist (`packages/validation/src/safe-url.ts`,
+   used by every block with a link — `hero.ctaHref`, `cta.buttonHref`)
+   accepted any string starting with `/`, including `//evil.com` — which a
+   browser resolves as a full absolute URL against the current page's own
+   scheme, exactly the same redirect risk as accepting `https://evil.com`
+   outright. **Fixed** by explicitly excluding a `//`-prefixed value from
+   the "safe relative path" case. **Regression test:** `safe-url.test.ts`'s
+   `"rejects //evil.com"` case, caught by the test suite itself before
+   this ever reached the seed data or a real block.
+2. **No adversarial test proving slug normalization is path-traversal-safe.**
+   `normalizeSlug` was already safe by construction (every character
+   outside `[a-z0-9]` — including `/` and `.` — collapses to a single
+   hyphen, so `..`/`/` cannot survive normalization), but nothing proved
+   it. **Fixed** by adding an explicit regression test
+   (`slug.test.ts`: `../../etc/passwd` → `etc-passwd`, `..%2F..%2Fetc` →
+   `2f-2fetc`, `....//....//` → `""`) rather than leaving it as an
+   undiscovered, unverified assumption.
+
+Everything else on the section 48 checklist was verified as already
+correctly handled by the layers described above (cross-tenant
+Property/Unit/Page/Media: RLS + composite FK + repository-layer tests in
+`packages/rentals`/`packages/content`; unknown block type/version and
+invalid props: the Block Registry, see
+[docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md); type spoofing: `type`/`version`
+are read independently of `props`, never inferred from it; XSS: no
+`dangerouslySetInnerHTML` anywhere in `packages/renderer`; tenant leak via
+the renderer: the adversarial test in `render-page.test.tsx` proving a
+Tenant A block referencing Tenant B's real Property renders a generic
+placeholder, never Tenant B's data; forged admin mutations and
+insufficient permission: every new Site Editor Server Action goes through
+`withTenantPage()`, proven end to end by `apps/admin/e2e/site-editor.spec.ts`).
 
 ## How the tests actually exercise RLS
 
@@ -155,3 +212,6 @@ are all proven end to end, not asserted against a stubbed auth layer. See
 - `docker-compose.yml` uses fixed dev passwords for every role. Fine for local dev; a real deployment must use secrets management for every `DATABASE_URL*`.
 - No WAF, no secrets scanning in CI beyond "don't commit `.env`" — out of scope for this phase.
 - No CSRF token beyond Server Actions' built-in same-origin check + `SameSite=Lax` — see [docs/AUTHENTICATION.md#csrf](AUTHENTICATION.md#csrf). Any future non-Server-Action mutating endpoint needs its own explicit protection.
+- **No Draft/Release/Publish pipeline (v0.3).** Every Site Editor edit (a Page's metadata, a block's props, a Property/Unit field, a theme override) is live for every visitor immediately — there is no review, staging, or rollback step. See [docs/ROADMAP.md](ROADMAP.md) and [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility) for what's already designed to make adding one non-breaking.
+- **Plain text only for block copy (v0.3).** No rich-text/markup block exists yet — `text@1`'s `body` renders as escaped JSX text with `\n`-separated paragraphs, nothing else. A future rich-text block must be a structured, sanitized document model, never raw HTML passed through unchanged — see [docs/RENDERING.md#security](RENDERING.md#security).
+- **No real media upload/CDN pipeline (v0.3).** `media_assets.storageKey` is an opaque reference; there is no upload flow, image transform, or CDN integration behind it yet — see [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).

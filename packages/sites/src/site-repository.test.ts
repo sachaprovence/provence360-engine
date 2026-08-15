@@ -1,8 +1,21 @@
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sites } from "@provence360/database";
-import { createTenant, ensureTestDatabaseReady, resetDatabase } from "@provence360/testkit";
+import {
+  createTenant,
+  createTheme,
+  ensureTestDatabaseReady,
+  resetDatabase,
+} from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
-import { createSite, getSiteBySlug, listSites } from "./site-repository";
+import { SiteNotFoundError } from "./site-repository";
+import {
+  createSite,
+  getSiteBySlug,
+  listSites,
+  updateSiteSettings,
+  updateSiteTheme,
+} from "./site-repository";
 
 beforeAll(async () => {
   await ensureTestDatabaseReady();
@@ -78,5 +91,120 @@ describe("createSite / getSiteBySlug / listSites", () => {
         tx.insert(sites).values({ tenantId: tenantB.id, slug: "forged", name: "Forged" }),
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("updateSiteSettings", () => {
+  it("updates a site's v0.3 settings fields", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteSettings(tx, {
+        id: site.id,
+        publicName: "Villa des Oliviers",
+        timezone: "Europe/Paris",
+        defaultLocale: "fr",
+        enabledLocales: ["fr", "en"],
+        contactEmail: "contact@villa.test",
+      }),
+    );
+
+    expect(updated.publicName).toBe("Villa des Oliviers");
+    expect(updated.enabledLocales).toEqual(["fr", "en"]);
+  });
+
+  it("refuses to update another tenant's site", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteB = await withTenantContext(tenantB.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    await expect(
+      withTenantContext(tenantA.id, (tx) =>
+        updateSiteSettings(tx, { id: siteB.id, publicName: "Hacked" }),
+      ),
+    ).rejects.toThrow(SiteNotFoundError);
+  });
+});
+
+describe("updateSiteTheme", () => {
+  it("sets a site's base theme", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    const theme = await createTheme({ key: "provence" });
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteTheme(tx, { id: site.id, themeId: theme.id }),
+    );
+    expect(updated.themeId).toBe(theme.id);
+  });
+
+  it("two sites can override the same base theme differently", async () => {
+    const tenant = await createTenant();
+    const theme = await createTheme({ key: "provence" });
+    const siteA = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "a", name: "A" }),
+    );
+    const siteB = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteTheme(tx, {
+        id: siteA.id,
+        themeId: theme.id,
+        themeOverrides: { "color.primary": "olive" },
+      }),
+    );
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteTheme(tx, {
+        id: siteB.id,
+        themeId: theme.id,
+        themeOverrides: { "color.primary": "blue" },
+      }),
+    );
+
+    const [a] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, siteA.id)),
+    );
+    const [b] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, siteB.id)),
+    );
+    expect((a?.themeOverrides as Record<string, string>)["color.primary"]).toBe("olive");
+    expect((b?.themeOverrides as Record<string, string>)["color.primary"]).toBe("blue");
+  });
+
+  it("rejects an override key outside the closed token catalog", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteTheme(tx, { id: site.id, themeOverrides: { "color.wildcard": "red" } as never }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("refuses to change another tenant's site theme", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteB = await withTenantContext(tenantB.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+    const theme = await createTheme({ key: "provence" });
+
+    await expect(
+      withTenantContext(tenantA.id, (tx) =>
+        updateSiteTheme(tx, { id: siteB.id, themeId: theme.id }),
+      ),
+    ).rejects.toThrow(SiteNotFoundError);
   });
 });

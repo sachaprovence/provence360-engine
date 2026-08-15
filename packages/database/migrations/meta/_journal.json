@@ -29,6 +29,27 @@
       "when": 1786794102241,
       "tag": "0003_auth_role_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786813771350,
+      "tag": "0004_app_role_base_table_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786814076070,
+      "tag": "0005_hard_bloodstrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786814091185,
+      "tag": "0006_v03_role_grants",
+      "breakpoints": true
     }
   ]
 }

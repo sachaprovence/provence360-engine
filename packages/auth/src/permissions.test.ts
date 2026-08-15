@@ -41,6 +41,34 @@ describe("getPermissionsForRole", () => {
     expect(granted.has("site.create")).toBe(false);
     expect(granted.has("tenant.update")).toBe(false);
   });
+
+  it("admin can manage the v0.3 Site Domain resources (Property, Unit, Page, Media)", () => {
+    const granted = getPermissionsForRole("admin");
+    expect(granted.has("property.create")).toBe(true);
+    expect(granted.has("unit.delete")).toBe(true);
+    expect(granted.has("page.update")).toBe(true);
+    expect(granted.has("media.create")).toBe(true);
+    expect(granted.has("theme.update")).toBe(true);
+  });
+
+  it("theme has no create/delete permission for any role — the catalog is curated, not tenant-authored", () => {
+    expect(PERMISSIONS).not.toContain("theme.create");
+    expect(PERMISSIONS).not.toContain("theme.delete");
+  });
+
+  it("member can read the v0.3 Site Domain resources but not write them", () => {
+    const granted = getPermissionsForRole("member");
+    expect(granted.has("property.read")).toBe(true);
+    expect(granted.has("unit.read")).toBe(true);
+    expect(granted.has("page.read")).toBe(true);
+    expect(granted.has("theme.read")).toBe(true);
+    expect(granted.has("media.read")).toBe(true);
+    expect(granted.has("property.create")).toBe(false);
+    expect(granted.has("unit.update")).toBe(false);
+    expect(granted.has("page.delete")).toBe(false);
+    expect(granted.has("theme.update")).toBe(false);
+    expect(granted.has("media.create")).toBe(false);
+  });
 });
 
 describe("can", () => {

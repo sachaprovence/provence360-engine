@@ -1,0 +1,36 @@
+{
+  "name": "@provence360/renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@provence360/content": "workspace:*",
+    "@provence360/database": "workspace:*",
+    "@provence360/observability": "workspace:*",
+    "@provence360/rentals": "workspace:*",
+    "@provence360/themes": "workspace:*",
+    "react": "19.2.8"
+  },
+  "devDependencies": {
+    "@provence360/config": "workspace:*",
+    "@provence360/tenant": "workspace:*",
+    "@provence360/testkit": "workspace:*",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "eslint": "9.39.5",
+    "react-dom": "19.2.8",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

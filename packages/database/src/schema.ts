@@ -1,8 +1,12 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
+  foreignKey,
   index,
+  integer,
   jsonb,
+  numeric,
   pgPolicy,
   pgRole,
   pgTable,
@@ -202,6 +206,89 @@ export const memberships = pgTable(
 ).enableRLS();
 
 // ---------------------------------------------------------------------------
+// themes — a PLATFORM-level catalog (v0.3), deliberately not tenant-scoped:
+// a design system a tenant *picks* and *narrowly overrides* per site
+// (`sites.themeId`/`sites.themeOverrides` below), never one it authors
+// wholesale — see docs/THEMES.md and docs/adr/0011-theme-token-model.md.
+// Governed the same way `amenities` is: readable by every tenant, writable
+// only by the admin/owner role (migrations/seed) in v0.3 — there is no
+// tenant-facing "create a theme" capability yet, on purpose (see section 21
+// of the brief: no arbitrary CSS, no ungoverned per-tenant forks).
+// ---------------------------------------------------------------------------
+export const themeStatusValues = ["active", "deprecated"] as const;
+export type ThemeStatus = (typeof themeStatusValues)[number];
+
+export const themes = pgTable(
+  "themes",
+  {
+    id: id(),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    // Semantic design tokens (color.*, font.*, radius.*, ...) — validated
+    // against packages/themes' Zod schema on every write, never trusted as
+    // opaque JSON. See docs/THEMES.md.
+    tokens: jsonb("tokens").notNull(),
+    status: text("status", { enum: themeStatusValues }).notNull().default("active"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("themes_key_uidx").on(t.key),
+    // Not tenant data — every tenant may read the shared catalog. No
+    // INSERT/UPDATE/DELETE policy exists for provence360_app at all, so
+    // (combined with no GRANT for those commands either — belt and
+    // braces) a tenant-scoped request can never mutate the catalog.
+    pgPolicy("read_themes", {
+      for: "select",
+      to: appRole,
+      using: sql`true`,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// amenities — a PLATFORM-level, curated catalog (v0.3), the same shape as
+// `themes` and for the same reason: an ungoverned per-tenant free-text
+// amenities list would be unqueryable and untranslatable at scale ("wifi"
+// vs "WiFi" vs "internet" vs "wi-fi" as three different tenants' strings).
+// See docs/adr/0012-media-asset-and-amenity-catalog.md.
+// ---------------------------------------------------------------------------
+export const amenityCategoryValues = [
+  "connectivity",
+  "wellness",
+  "outdoor",
+  "comfort",
+  "safety",
+  "accessibility",
+  "other",
+] as const;
+export type AmenityCategory = (typeof amenityCategoryValues)[number];
+
+export const amenityStatusValues = ["active", "deprecated"] as const;
+export type AmenityStatus = (typeof amenityStatusValues)[number];
+
+export const amenities = pgTable(
+  "amenities",
+  {
+    id: id(),
+    key: text("key").notNull(),
+    category: text("category", { enum: amenityCategoryValues }).notNull(),
+    label: text("label").notNull(),
+    description: text("description"),
+    iconKey: text("icon_key"),
+    status: text("status", { enum: amenityStatusValues }).notNull().default("active"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("amenities_key_uidx").on(t.key),
+    pgPolicy("read_amenities", {
+      for: "select",
+      to: appRole,
+      using: sql`true`,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
 // sites — a public site owned by exactly one tenant. A tenant may own
 // several. Draft/Release/Theme/Settings etc. are intentionally not modeled
 // yet (see ROADMAP) — Foundation v0.1 only needs enough to prove
@@ -218,13 +305,60 @@ export const sites = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
     slug: text("slug").notNull(),
+    // The tenant-admin-facing display label — kept as `name` (not renamed
+    // to `internalName`) to avoid breaking every v0.1/v0.2 caller and test
+    // that already reads/writes this column; it always meant "internal
+    // name," it just didn't have a public counterpart yet. `publicName`
+    // (v0.3) is what actually renders on the public site; falls back to
+    // `name` when unset so existing seeded/tested sites keep working
+    // unchanged.
     name: text("name").notNull(),
+    publicName: text("public_name"),
     status: text("status", { enum: siteStatusValues }).notNull().default("draft"),
+    // IANA time zone identifier (e.g. "Europe/Paris"). Validated as a real
+    // zone by packages/validation's Zod schema at every write — Postgres
+    // has no native "is this a real IANA zone" constraint, so this column
+    // is deliberately plain `text`, not an enum (the IANA database changes
+    // over time; baking it into a Postgres enum would need a migration
+    // every time it does).
+    timezone: text("timezone").notNull().default("Europe/Paris"),
+    // BCP 47-ish locale tags ("fr", "en"). `defaultLocale` must always be a
+    // member of `enabledLocales` — enforced by Zod at the application
+    // boundary (packages/validation), not by Postgres: JSONB has no
+    // "array contains this scalar column's value" constraint. See
+    // docs/LOCALIZATION.md.
+    defaultLocale: text("default_locale").notNull().default("fr"),
+    enabledLocales: jsonb("enabled_locales").notNull().default(["fr"]),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    // Which base Theme this site resolves against, and the (validated,
+    // narrow) per-site token overrides layered on top of it — see
+    // packages/themes and docs/THEMES.md. Nullable: a brand-new site has
+    // no theme chosen yet and renders with the renderer's hard-coded
+    // fallback tokens rather than failing to render at all.
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "set null" }),
+    themeOverrides: jsonb("theme_overrides").notNull().default({}),
+    // Ordered nav items ({ label, href }-shaped, validated by
+    // packages/content's NavigationSchema) and a flat feature-flag object
+    // (validated against a closed key catalog) — both genuinely
+    // polymorphic per-site configuration, neither one has invariants a
+    // relational column could express better. See section 4/21 of the
+    // brief and docs/SITE_DOMAIN.md for why these are JSONB while address
+    // fields etc. below are not.
+    navigation: jsonb("navigation").notNull().default([]),
+    features: jsonb("features").notNull().default({}),
     ...timestamps,
   },
   (t) => [
     uniqueIndex("sites_tenant_slug_uidx").on(t.tenantId, t.slug),
     index("sites_tenant_id_idx").on(t.tenantId),
+    // Lets child tables (properties, pages) declare a composite foreign
+    // key against (tenant_id, id) instead of just (id) — see
+    // docs/adr/0010-property-unit-ownership.md. This is what makes a
+    // cross-tenant reference (a Property whose tenant_id doesn't match its
+    // parent Site's tenant_id) a constraint violation Postgres itself
+    // rejects, not just something RLS happens to also hide.
+    uniqueIndex("sites_tenant_id_id_uidx").on(t.tenantId, t.id),
     pgPolicy("tenant_isolation_sites", {
       for: "all",
       to: appRole,
@@ -288,6 +422,304 @@ export const domains = pgTable(
       for: "select",
       to: resolverRole,
       using: sql`true`,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// media_assets — a reference to a stored file (image/video/document), never
+// the file itself and never an arbitrary URL. `storageKey` is an opaque
+// pointer into whatever object storage a deployment uses; the actual
+// upload/CDN/transform pipeline is out of scope for v0.3 (see
+// docs/adr/0012-media-asset-and-amenity-catalog.md and docs/ROADMAP.md) —
+// this table exists so content can hold a stable, typed *reference*
+// instead of a bare string scattered through JSONB. Deliberately no
+// `updatedAt`: once created, a media asset's own metadata doesn't change —
+// a new version is a new row, not an edit (same reasoning as an immutable
+// audit log entry, see docs/SITE_DOMAIN.md#future-release-compatibility).
+// ---------------------------------------------------------------------------
+export const mediaKindValues = ["image", "video", "document"] as const;
+export type MediaKind = (typeof mediaKindValues)[number];
+
+export const mediaAssets = pgTable(
+  "media_assets",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: mediaKindValues }).notNull(),
+    storageKey: text("storage_key").notNull(),
+    mimeType: text("mime_type").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    altText: text("alt_text"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("media_assets_tenant_storage_key_uidx").on(t.tenantId, t.storageKey),
+    uniqueIndex("media_assets_tenant_id_id_uidx").on(t.tenantId, t.id),
+    index("media_assets_tenant_id_idx").on(t.tenantId),
+    pgPolicy("tenant_isolation_media_assets", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// properties — a tourist property/place (the RENTAL domain's business
+// data, deliberately separate from any Site's presentation — see section 2
+// of the brief and docs/adr/0010-property-unit-ownership.md). A Property
+// belongs to exactly one Site in v0.3 (the simplest correct model, not a
+// permanent constraint — see the ADR for the future many-to-many path) and
+// always, redundantly, to that Site's own tenant: `(tenant_id, site_id)`
+// is a composite foreign key against `sites(tenant_id, id)`, so a Property
+// whose tenant_id doesn't match its Site's tenant_id is a constraint
+// Postgres itself refuses, not merely something RLS happens to also hide.
+// ---------------------------------------------------------------------------
+export const propertyTypeValues = [
+  "villa",
+  "house",
+  "gite",
+  "domaine",
+  "guest_house",
+  "apartment",
+  "other",
+] as const;
+export type PropertyType = (typeof propertyTypeValues)[number];
+
+export const propertyStatusValues = ["draft", "active", "archived"] as const;
+export type PropertyStatus = (typeof propertyStatusValues)[number];
+
+export const properties = pgTable(
+  "properties",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    siteId: uuid("site_id").notNull(),
+    internalName: text("internal_name").notNull(),
+    publicName: text("public_name").notNull(),
+    slug: text("slug").notNull(),
+    // Simple plain-text description for v0.3 — structured/rich editorial
+    // copy belongs in the Content Graph (a Page's PropertySummary block),
+    // not duplicated here. See section 15 of the brief.
+    description: text("description"),
+    propertyType: text("property_type", { enum: propertyTypeValues }).notNull(),
+    addressLine1: text("address_line1"),
+    addressLine2: text("address_line2"),
+    addressCity: text("address_city"),
+    addressPostalCode: text("address_postal_code"),
+    addressRegion: text("address_region"),
+    addressCountry: text("address_country"),
+    // Nullable, never a 0/0 sentinel — "no coordinates set yet" must be
+    // distinguishable from "coordinates are (0, 0)" (a real place in the
+    // Gulf of Guinea). See docs/SITE_DOMAIN.md.
+    latitude: numeric("latitude", { precision: 9, scale: 6 }),
+    longitude: numeric("longitude", { precision: 9, scale: 6 }),
+    // Nullable: falls back to the owning Site's timezone when unset — most
+    // properties share their site's timezone; only a multi-region tenant
+    // needs to override it per property.
+    timezone: text("timezone"),
+    status: text("status", { enum: propertyStatusValues }).notNull().default("draft"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("properties_site_slug_uidx").on(t.siteId, t.slug),
+    uniqueIndex("properties_tenant_id_id_uidx").on(t.tenantId, t.id),
+    index("properties_tenant_id_idx").on(t.tenantId),
+    index("properties_site_id_idx").on(t.siteId),
+    foreignKey({
+      columns: [t.tenantId, t.siteId],
+      foreignColumns: [sites.tenantId, sites.id],
+      name: "properties_tenant_site_fk",
+    }).onDelete("cascade"),
+    pgPolicy("tenant_isolation_properties", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// units — an individually describable (and, later, bookable) space within a
+// Property. "Villa du Ventoux" (one Unit == the whole villa) and "Domaine
+// des Oliviers" (three Units: main villa, studio, independent room) are
+// both ordinary Properties under this model — see section 5 of the brief.
+// Same composite-FK ownership pattern as Property -> Site.
+// ---------------------------------------------------------------------------
+export const unitStatusValues = ["draft", "active", "archived", "not_bookable_separately"] as const;
+export type UnitStatus = (typeof unitStatusValues)[number];
+
+export const unitSizeUnitValues = ["sqm", "sqft"] as const;
+export type UnitSizeUnit = (typeof unitSizeUnitValues)[number];
+
+export const units = pgTable(
+  "units",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    propertyId: uuid("property_id").notNull(),
+    internalName: text("internal_name").notNull(),
+    publicName: text("public_name").notNull(),
+    slug: text("slug").notNull(),
+    status: text("status", { enum: unitStatusValues }).notNull().default("draft"),
+    // All capacity/room counts are nullable — "unknown" must never be
+    // conflated with "zero" (a studio has 0 separate bedrooms and is not
+    // the same as "bedroom count unknown"). `bathrooms` is `numeric(3,1)`
+    // specifically to represent a half-bathroom (1.5) without inventing a
+    // separate "half baths" column. See docs/SITE_DOMAIN.md.
+    maxGuests: integer("max_guests"),
+    bedrooms: integer("bedrooms"),
+    beds: integer("beds"),
+    bathrooms: numeric("bathrooms", { precision: 3, scale: 1 }),
+    size: numeric("size", { precision: 8, scale: 2 }),
+    sizeUnit: text("size_unit", { enum: unitSizeUnitValues }),
+    description: text("description"),
+    // Render order within a UnitGrid block — an explicit column (not
+    // array-position-in-a-JSON-document) because Units are relational rows
+    // queried directly, not embedded in a block's own JSON.
+    ordering: integer("ordering").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("units_property_slug_uidx").on(t.propertyId, t.slug),
+    uniqueIndex("units_tenant_id_id_uidx").on(t.tenantId, t.id),
+    index("units_tenant_id_idx").on(t.tenantId),
+    index("units_property_id_idx").on(t.propertyId),
+    foreignKey({
+      columns: [t.tenantId, t.propertyId],
+      foreignColumns: [properties.tenantId, properties.id],
+      name: "units_tenant_property_fk",
+    }).onDelete("cascade"),
+    // sizeUnit is required exactly when size is present — Postgres CAN
+    // express this invariant (unlike the JSONB ones elsewhere in this
+    // schema), so it does, as a real CHECK rather than only an
+    // application-layer Zod rule.
+    check(
+      "units_size_requires_unit_ck",
+      sql`(${t.size} is null and ${t.sizeUnit} is null) or (${t.size} is not null and ${t.sizeUnit} is not null)`,
+    ),
+    pgPolicy("tenant_isolation_units", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// unit_amenities — join table asserting "this Unit has this (catalog)
+// Amenity." `amenity_id` references the global, non-tenant-scoped
+// `amenities` catalog directly (no tenant check needed — the catalog isn't
+// tenant data); `unit_id` uses the same composite-FK ownership pattern as
+// everything else so a tenant can never attach an amenity to a Unit it
+// doesn't own.
+// ---------------------------------------------------------------------------
+export const unitAmenities = pgTable(
+  "unit_amenities",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    unitId: uuid("unit_id").notNull(),
+    amenityId: uuid("amenity_id")
+      .notNull()
+      .references(() => amenities.id, { onDelete: "restrict" }),
+    // Small, optional, amenity-specific metadata (e.g. `{ heated: true }`
+    // for a pool) — deliberately not a place to smuggle in unrelated data;
+    // see docs/adr/0012-media-asset-and-amenity-catalog.md for the "don't
+    // over-engineer this yet" reasoning.
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("unit_amenities_unit_amenity_uidx").on(t.unitId, t.amenityId),
+    index("unit_amenities_tenant_id_idx").on(t.tenantId),
+    index("unit_amenities_unit_id_idx").on(t.unitId),
+    foreignKey({
+      columns: [t.tenantId, t.unitId],
+      foreignColumns: [units.tenantId, units.id],
+      name: "unit_amenities_tenant_unit_fk",
+    }).onDelete("cascade"),
+    pgPolicy("tenant_isolation_unit_amenities", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// pages — the Content Graph's addressable unit: one URL, one ordered list
+// of Block instances. `content` is a validated JSONB array (see
+// packages/content and docs/adr/0013-page-content-storage.md for why a
+// document over relational block rows), never trusted as opaque JSON by
+// anything that reads it — every read re-validates through the Block
+// Registry. Same composite-FK ownership pattern tying every Page to its
+// Site's own tenant.
+// ---------------------------------------------------------------------------
+export const pageTypeValues = ["home", "standard", "property", "unit", "contact"] as const;
+export type PageType = (typeof pageTypeValues)[number];
+
+export const pageStatusValues = ["draft", "active", "archived"] as const;
+export type PageStatus = (typeof pageStatusValues)[number];
+
+export const pages = pgTable(
+  "pages",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    siteId: uuid("site_id").notNull(),
+    slug: text("slug").notNull(),
+    internalName: text("internal_name").notNull(),
+    status: text("status", { enum: pageStatusValues }).notNull().default("draft"),
+    pageType: text("page_type", { enum: pageTypeValues }).notNull().default("standard"),
+    // { title?, description?, canonicalPath?, noIndex?, noFollow?,
+    //   ogImageMediaId? } — validated by packages/content's SeoSchema. See
+    // docs/SEO section of docs/RENDERING.md.
+    seo: jsonb("seo").notNull().default({}),
+    // Block instances: [{ id, type, version, props }, ...]. `id` is stable
+    // per instance (see section 18 of the brief); `type`/`version` select
+    // which registered schema `props` must satisfy — see
+    // packages/content/src/block-registry.ts.
+    content: jsonb("content").notNull().default([]),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("pages_site_slug_uidx").on(t.siteId, t.slug),
+    // At most one HOME page per site — a real invariant, enforced by
+    // Postgres, not just convention.
+    uniqueIndex("pages_site_home_uidx")
+      .on(t.siteId)
+      .where(sql`page_type = 'home'`),
+    index("pages_tenant_id_idx").on(t.tenantId),
+    index("pages_site_id_idx").on(t.siteId),
+    foreignKey({
+      columns: [t.tenantId, t.siteId],
+      foreignColumns: [sites.tenantId, sites.id],
+      name: "pages_tenant_site_fk",
+    }).onDelete("cascade"),
+    check("pages_content_is_array_ck", sql`jsonb_typeof(${t.content}) = 'array'`),
+    pgPolicy("tenant_isolation_pages", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
     }),
   ],
 ).enableRLS();

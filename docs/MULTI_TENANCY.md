@@ -82,10 +82,32 @@ that is only ever obtainable this way. See
 for the implementation, and `packages/tenant/src/with-tenant-context.test.ts`
 for the isolation tests it's held to.
 
+## Extended in v0.3: Property, Unit, Amenity, MediaAsset, Page
+
+Foundation v0.3 adds the engine's first real business/presentation domain
+on top of this same tenancy model — see
+[docs/SITE_DOMAIN.md](SITE_DOMAIN.md) and
+[docs/CONTENT_MODEL.md](CONTENT_MODEL.md) for the full shape. The tenancy
+rules above extend unchanged: every new tenant-scoped table
+(`properties`, `units`, `unit_amenities`, `media_assets`, `pages`) carries
+its own `tenant_id`, its own RLS policy following the exact
+`tenant_isolation_*` pattern below, and (new in v0.3) a **composite
+foreign key** tying it to its parent's `(tenant_id, id)` — a second,
+database-level layer on top of RLS, so a forged cross-tenant reference is
+rejected by Postgres itself, not only filtered out by a policy. See
+[docs/SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls](SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls).
+
+Two platform-level catalogs (`themes`, `amenities`) are the one deliberate
+exception to "tenant-scoped": neither carries a `tenant_id` at all, both
+are readable by every tenant and writable only by the platform admin role
+— the same pattern, reasoned about explicitly in
+[ADR 0011](adr/0011-theme-token-model.md) and
+[ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
+
 ## What's NOT modeled yet
 
-`Draft`, `Releases`, `Theme`, `Settings`, `Assets`, `Pages`, per-site
-languages/features/SEO/integrations — all deferred, see
-[ROADMAP.md](ROADMAP.md). The `sites` table today has just enough
-(`slug`, `name`, `status`) to prove the resolution pipeline; it is not the
-final shape of a site.
+`Draft`/`Release`/`Publish` (an immutable, versioned snapshot of a Page),
+per-site channel integrations, and a booking engine — all deferred, see
+[ROADMAP.md](ROADMAP.md). Every Page a Site exposes today renders its
+**live** row directly; editing it through the Site Editor takes effect
+immediately, for every visitor, with no review or publish step.

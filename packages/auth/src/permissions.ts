@@ -31,6 +31,33 @@ export const PERMISSIONS = [
   "billing.manage",
 
   "audit.read",
+
+  // v0.3 — Site Domain, Content Graph & Rendering Contracts (see
+  // docs/SITE_DOMAIN.md, docs/CONTENT_MODEL.md, docs/THEMES.md). Themes
+  // are a curated, platform-level catalog (docs/adr/0011-theme-token-model.md)
+  // — tenants can read and apply/override one, never create or delete one,
+  // hence "theme.read"/"theme.update" only, no "theme.create"/"theme.delete".
+  "property.read",
+  "property.create",
+  "property.update",
+  "property.delete",
+
+  "unit.read",
+  "unit.create",
+  "unit.update",
+  "unit.delete",
+
+  "page.read",
+  "page.create",
+  "page.update",
+  "page.delete",
+
+  "theme.read",
+  "theme.update",
+
+  "media.read",
+  "media.create",
+  "media.delete",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -58,6 +85,23 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   "release.read",
   "release.publish",
   "audit.read",
+  "property.read",
+  "property.create",
+  "property.update",
+  "property.delete",
+  "unit.read",
+  "unit.create",
+  "unit.update",
+  "unit.delete",
+  "page.read",
+  "page.create",
+  "page.update",
+  "page.delete",
+  "theme.read",
+  "theme.update",
+  "media.read",
+  "media.create",
+  "media.delete",
   // Deliberately absent: tenant.update, billing.*. Deliberately absent in
   // *effect* rather than by permission (member.update/member.remove are
   // granted): the owner invariant in membership-repository.ts additionally
@@ -71,6 +115,11 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
   "site.read",
   "domain.read",
   "release.read",
+  "property.read",
+  "unit.read",
+  "page.read",
+  "theme.read",
+  "media.read",
   // Deliberately absent: audit.read — the audit trail is treated as an
   // administrative surface, not "basic reading," in this codebase.
 ];

@@ -1,11 +1,18 @@
 import { sql } from "drizzle-orm";
 import {
   loadDotEnv,
+  amenities,
   auditLogs,
   domains,
+  mediaAssets,
   memberships,
+  pages,
+  properties,
   sites,
   tenants,
+  themes,
+  unitAmenities,
+  units,
   users,
 } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
@@ -58,11 +65,19 @@ export function ensureTestDatabaseReady(): Promise<void> {
 /**
  * Wipes all tenant-scoped data via the admin (RLS-bypassing) connection.
  * Call this in `beforeEach` for tests that need a clean slate.
+ *
+ * `amenities`/`themes` are platform-level catalogs, not tenant data (see
+ * docs/adr/0012-media-asset-and-amenity-catalog.md) — on the real
+ * dev/prod database they're deliberately long-lived, curated rows. In the
+ * test database they're just as ephemeral as everything else: every test
+ * that needs one creates its own via `createAmenity`/`createTheme`, so
+ * truncating them here between tests is what keeps the catalog from
+ * accumulating one-off rows across an entire test run.
  */
 export async function resetDatabase(): Promise<void> {
   assertTestEnvironment();
   const db = getAdminDb();
   await db.execute(
-    sql`truncate table ${auditLogs}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users} restart identity cascade`,
+    sql`truncate table ${auditLogs}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
   );
 }

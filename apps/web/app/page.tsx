@@ -1,61 +1,87 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { sites, tenants } from "@provence360/database";
+import { getPageBySlug } from "@provence360/content";
+import { sites } from "@provence360/database";
 import { resolveSiteByHostname } from "@provence360/domains";
+import { renderBlocks, resolveSiteThemeTokens, type RenderContext } from "@provence360/renderer";
 import { withTenantContext } from "@provence360/tenant";
 
-// The public request pipeline this Foundation exists to prove:
+// The public request pipeline this Foundation exists to prove (v0.3):
 //
-//   Host -> DomainResolver -> Site -> Tenant -> PublishedRelease -> Renderer
+//   Host -> DomainResolver -> Site -> Page -> Content -> Domain data -> Theme -> Renderer
 //
-// PublishedRelease/the real Renderer (themes, blocks, content) are out of
-// scope for v0.1 (see docs/ROADMAP.md) — this page resolves all the way
-// through Tenant and renders a placeholder proving the pipeline is real,
-// not stubbed.
+// Nothing below is specific to any one tenant or site — the exact same
+// code renders every seeded site (see packages/database/src/scripts/seed.ts
+// for "Villa des Oliviers" vs "Mas du Luberon"), driven entirely by data:
+// which Site the hostname resolves to, which Page/blocks that Site's
+// content graph holds, and which Theme (+ overrides) it references. A
+// Draft -> Release -> Publish pipeline is deferred to v0.4 (see
+// docs/ROADMAP.md) — this always renders the current, live content.
 export default async function SitePage() {
   const headerList = await headers();
   const host = headerList.get("host") ?? "";
 
   const resolved = await resolveSiteByHostname(host);
-  if (!resolved) {
+  if (!resolved || resolved.siteStatus !== "active") {
     notFound();
   }
 
-  const { siteId, tenantId, siteStatus } = resolved;
+  const { siteId, tenantId } = resolved;
 
-  const details = await withTenantContext(tenantId, async (tx) => {
+  const rendered = await withTenantContext(tenantId, async (tx) => {
     const [site] = await tx.select().from(sites).where(eq(sites.id, siteId));
-    const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, tenantId));
-    return { site, tenant };
+    if (!site) {
+      // The domain resolved, but the tenant-scoped read (RLS-enforced)
+      // found nothing — this would mean the resolver and RLS disagree,
+      // which should be impossible. Fail loud rather than render a lie.
+      throw new Error(
+        `Resolved site ${siteId} was not visible under tenant ${tenantId}'s own context.`,
+      );
+    }
+
+    const page = await getPageBySlug(tx, site.id, "");
+    if (!page) return null;
+
+    const tokens = await resolveSiteThemeTokens(tx, site);
+    const context: RenderContext = {
+      tx,
+      tenantId,
+      siteId: site.id,
+      locale: site.defaultLocale,
+      defaultLocale: site.defaultLocale,
+      tokens,
+    };
+
+    const elements = await renderBlocks(page.content as unknown[], context);
+    return { site, tokens, elements };
   });
 
-  if (!details.site || !details.tenant) {
-    // The domain resolved, but the tenant-scoped read (RLS-enforced) found
-    // nothing — this would mean the resolver and RLS disagree, which should
-    // be impossible. Fail loud rather than render a lie.
-    throw new Error(
-      `Resolved site ${siteId} was not visible under tenant ${tenantId}'s own context.`,
-    );
+  if (!rendered) {
+    notFound();
   }
 
+  const { site, tokens, elements } = rendered;
+
   return (
-    <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1.5rem" }}>
-      <p style={{ textTransform: "uppercase", fontSize: 12, letterSpacing: 1, color: "#6b7280" }}>
-        Provence360 Engine — Foundation v0.1
-      </p>
-      <h1 style={{ fontSize: 32, marginBottom: 4 }}>{details.site.name}</h1>
-      <p style={{ color: "#374151" }}>Operated by {details.tenant.name}</p>
-      <dl style={{ marginTop: 32, fontSize: 14, color: "#4b5563" }}>
-        <div>
-          <dt style={{ display: "inline", fontWeight: 600 }}>Resolved host: </dt>
-          <dd style={{ display: "inline" }}>{host}</dd>
-        </div>
-        <div>
-          <dt style={{ display: "inline", fontWeight: 600 }}>Site status: </dt>
-          <dd style={{ display: "inline" }}>{siteStatus}</dd>
-        </div>
-      </dl>
+    <main
+      style={{
+        background: tokens["color.background"],
+        color: tokens["color.text"],
+        minHeight: "100vh",
+      }}
+    >
+      <div style={{ maxWidth: tokens["container.wide"], margin: "0 auto" }}>{elements}</div>
+      <footer
+        style={{
+          textAlign: "center",
+          padding: tokens["spacing.medium"],
+          color: tokens["color.muted"],
+          fontSize: 12,
+        }}
+      >
+        {site.publicName ?? site.name} — Provence360 Engine
+      </footer>
     </main>
   );
 }

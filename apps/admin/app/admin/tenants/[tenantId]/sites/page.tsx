@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { listSites } from "@provence360/sites";
 import { withTenantPage } from "@/lib/actor";
 import { CreateSiteForm } from "./create-site-form";
@@ -34,7 +35,14 @@ export default async function SitesPage({ params }: { params: Promise<{ tenantId
           <tbody>
             {siteList.map((site) => (
               <tr key={site.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                <td style={{ padding: "6px 4px" }}>{site.name}</td>
+                <td style={{ padding: "6px 4px" }}>
+                  <Link
+                    href={`/admin/tenants/${tenantId}/sites/${site.id}`}
+                    style={{ color: "#111827" }}
+                  >
+                    {site.name}
+                  </Link>
+                </td>
                 <td style={{ padding: "6px 4px", color: "#6b7280" }}>{site.slug}</td>
                 <td style={{ padding: "6px 4px" }}>{site.status}</td>
               </tr>
