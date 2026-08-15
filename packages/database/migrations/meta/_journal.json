@@ -15,6 +15,20 @@
       "when": 1786789310949,
       "tag": "0001_cheerful_stingray",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786794090538,
+      "tag": "0002_dapper_shooting_star",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786794102241,
+      "tag": "0003_auth_role_grants",
+      "breakpoints": true
     }
   ]
 }

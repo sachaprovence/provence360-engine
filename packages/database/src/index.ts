@@ -8,4 +8,6 @@ export * from "./schema";
 // unconditional enforcement is Postgres RLS (see docs/SECURITY.md).
 export type { AppDb, AppTx } from "./client-app";
 export { getResolverDb, closeResolverPool } from "./client-resolver";
+// `getAuthDb` is the same story as `getAppDb`: reachable only via
+// "@provence360/database/client-auth", used only by packages/auth.
 export { loadDotEnv } from "./load-env";

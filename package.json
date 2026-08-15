@@ -20,7 +20,7 @@
     "db:setup-roles": "pnpm --filter @provence360/database run setup-roles",
     "db:seed": "pnpm --filter @provence360/database run seed",
     "test:db:prepare": "NODE_ENV=test pnpm --filter @provence360/database run migrate && NODE_ENV=test pnpm --filter @provence360/database run setup-roles",
-    "test:e2e": "pnpm --filter @provence360/web run test:e2e",
+    "test:e2e": "pnpm --filter @provence360/web run test:e2e && pnpm --filter @provence360/admin run test:e2e",
     "dev": "turbo run dev --parallel"
   },
   "devDependencies": {

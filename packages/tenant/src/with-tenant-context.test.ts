@@ -129,8 +129,11 @@ describe("users RLS (no tenant_id column — visibility via memberships)", () =>
     const user = await createUser();
     await createMembership({ tenantId: tenant.id, userId: user.id });
 
+    // provence360_app is only granted a subset of columns (never
+    // password_hash — see migrations/0003_auth_role_grants.sql), so tests
+    // exercising this role select the same columns real app code would.
     const rows = await withTenantContext(tenant.id, (tx) =>
-      tx.select().from(users).where(eq(users.id, user.id)),
+      tx.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, user.id)),
     );
 
     expect(rows).toHaveLength(1);
@@ -143,7 +146,7 @@ describe("users RLS (no tenant_id column — visibility via memberships)", () =>
     await createMembership({ tenantId: tenantB.id, userId: userB.id });
 
     const rows = await withTenantContext(tenantA.id, (tx) =>
-      tx.select().from(users).where(eq(users.id, userB.id)),
+      tx.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, userB.id)),
     );
 
     expect(rows).toHaveLength(0);
@@ -157,13 +160,42 @@ describe("users RLS (no tenant_id column — visibility via memberships)", () =>
     await createMembership({ tenantId: tenantB.id, userId: contractor.id });
 
     const visibleToA = await withTenantContext(tenantA.id, (tx) =>
-      tx.select().from(users).where(eq(users.id, contractor.id)),
+      tx
+        .select({ id: users.id, email: users.email })
+        .from(users)
+        .where(eq(users.id, contractor.id)),
     );
     const visibleToB = await withTenantContext(tenantB.id, (tx) =>
-      tx.select().from(users).where(eq(users.id, contractor.id)),
+      tx
+        .select({ id: users.id, email: users.email })
+        .from(users)
+        .where(eq(users.id, contractor.id)),
     );
 
     expect(visibleToA).toHaveLength(1);
     expect(visibleToB).toHaveLength(1);
+  });
+
+  it("regression: provence360_app can never read users.password_hash, even inside a valid tenant context", async () => {
+    const tenant = await createTenant();
+    const user = await createUser();
+    await createMembership({ tenantId: tenant.id, userId: user.id });
+
+    // Selecting the whole row (as opposed to an explicit column list) is
+    // exactly how a future careless call site would accidentally try to
+    // read password_hash. It must fail at the grant level, not just be
+    // "unused" by convention — see migrations/0003_auth_role_grants.sql.
+    // drizzle-postgres wraps the driver error as `Failed query: ...` and
+    // puts the actual Postgres error (with the real message) on `.cause`.
+    let caught: unknown;
+    try {
+      await withTenantContext(tenant.id, (tx) =>
+        tx.select().from(users).where(eq(users.id, user.id)),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(String((caught as Error).cause)).toMatch(/permission denied for table users/);
   });
 });

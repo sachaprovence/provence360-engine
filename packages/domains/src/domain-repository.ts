@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { AppTx, DomainStatus } from "@provence360/database";
 import { domains, sites } from "@provence360/database";
+import { recordAuditLog } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import { normalizeHostname } from "@provence360/validation";
 
@@ -24,7 +25,13 @@ export class SiteNotFoundError extends Error {
  */
 export async function createDomain(
   tx: AppTx,
-  input: { siteId: string; hostname: string; isPrimary?: boolean; status?: DomainStatus },
+  input: {
+    siteId: string;
+    hostname: string;
+    isPrimary?: boolean;
+    status?: DomainStatus;
+    actorUserId?: string;
+  },
 ) {
   const tenantId = requireCurrentTenantId();
 
@@ -47,6 +54,15 @@ export async function createDomain(
     })
     .returning();
   if (!row) throw new Error("Failed to create domain");
+
+  await recordAuditLog(tx, {
+    ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
+    action: "DOMAIN_CREATED",
+    targetType: "domain",
+    targetId: row.id,
+    metadata: { hostname: row.hostname, siteId: row.siteId },
+  });
+
   return row;
 }
 
@@ -56,4 +72,9 @@ export async function listDomainsForSite(tx: AppTx, siteId: string) {
     .select()
     .from(domains)
     .where(and(eq(domains.siteId, siteId), eq(domains.tenantId, tenantId)));
+}
+
+export async function listDomainsForTenant(tx: AppTx) {
+  const tenantId = requireCurrentTenantId();
+  return tx.select().from(domains).where(eq(domains.tenantId, tenantId));
 }

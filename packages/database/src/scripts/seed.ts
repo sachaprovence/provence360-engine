@@ -1,19 +1,33 @@
+import { hash as argon2Hash } from "@node-rs/argon2";
 import { sql } from "drizzle-orm";
 import { closeAdminPool, getAdminDb } from "../admin/index";
 import { loadDotEnv } from "../load-env";
 import { auditLogs, domains, memberships, sites, tenants, users } from "../schema";
 
-// Minimal, idempotent dev seed: two tenants, a handful of users/memberships
-// (including one contractor who belongs to both tenants — the reason Users
-// are a global identity rather than a tenant-scoped table, see
-// docs/MULTI_TENANCY.md), one site per tenant, and multiple domains per
-// site. Runs on the admin connection, which owns the tables and therefore
-// bypasses RLS by design — this is a bootstrap script, not a request path.
+// Minimal, idempotent dev seed: two tenants ("Alpha" = Provence Sud, "Beta"
+// = Luberon Retreats), a handful of users/memberships exercising every
+// role/scope combination the Control Plane's authorization tests rely on,
+// one site per tenant, and multiple domains per site. Runs on the admin
+// connection, which owns the tables and therefore bypasses RLS by design —
+// this is a bootstrap script, not a request path.
+//
+// SEED PASSWORDS ARE PUBLIC. They exist only so `pnpm test:e2e` and local
+// `pnpm dev` have something to log in with. Never reuse them, never seed
+// this script against a database that also holds real user data, and
+// never let a deploy run this script against production (see
+// docs/SECURITY.md and docs/AUTHENTICATION.md#seed-data).
+const SEED_PASSWORD = "provence360-seed-only-not-a-real-password";
+
+// Mirrors packages/auth/src/password.ts's ARGON2_OPTIONS. Duplicated
+// rather than imported: packages/auth depends on packages/database, so
+// the reverse import would be circular. Keep the two in sync by hand.
+const ARGON2_OPTIONS = { memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
 
 loadDotEnv();
 
 async function main(): Promise<void> {
   const db = getAdminDb();
+  const seedPasswordHash = await argon2Hash(SEED_PASSWORD, ARGON2_OPTIONS);
 
   console.log("Clearing existing data...");
   await db.execute(
@@ -31,14 +45,25 @@ async function main(): Promise<void> {
   if (!provenceSud || !luberonRetreats) throw new Error("Failed to seed tenants");
 
   console.log("Seeding users...");
+  // - alice: sole OWNER of Alpha (Provence Sud)
+  // - bob: plain MEMBER of Alpha
+  // - carla: sole OWNER of Beta (Luberon Retreats)
+  // - diego: MEMBER of Beta (permission-boundary tests: read-only)
+  // - eve: the multi-tenant contractor — ADMIN of Alpha, MEMBER of Beta —
+  //   proof identity is global while access is scoped per membership, and
+  //   the tenant switcher's primary test fixture.
   const [alice, bob, carla, diego, eve] = await db
     .insert(users)
     .values([
-      { email: "alice@provence-sud.test", name: "Alice Martin" },
-      { email: "bob@provence-sud.test", name: "Bob Lefevre" },
-      { email: "carla@luberon-retreats.test", name: "Carla Rossi" },
-      { email: "diego@luberon-retreats.test", name: "Diego Fernandez" },
-      { email: "eve@contractor.test", name: "Eve Dubois" },
+      { email: "alice@provence-sud.test", name: "Alice Martin", passwordHash: seedPasswordHash },
+      { email: "bob@provence-sud.test", name: "Bob Lefevre", passwordHash: seedPasswordHash },
+      { email: "carla@luberon-retreats.test", name: "Carla Rossi", passwordHash: seedPasswordHash },
+      {
+        email: "diego@luberon-retreats.test",
+        name: "Diego Fernandez",
+        passwordHash: seedPasswordHash,
+      },
+      { email: "eve@contractor.test", name: "Eve Dubois", passwordHash: seedPasswordHash },
     ])
     .returning();
   if (!alice || !bob || !carla || !diego || !eve) throw new Error("Failed to seed users");
@@ -47,11 +72,9 @@ async function main(): Promise<void> {
   await db.insert(memberships).values([
     { tenantId: provenceSud.id, userId: alice.id, role: "owner" },
     { tenantId: provenceSud.id, userId: bob.id, role: "member" },
+    { tenantId: provenceSud.id, userId: eve.id, role: "admin" },
     { tenantId: luberonRetreats.id, userId: carla.id, role: "owner" },
-    { tenantId: luberonRetreats.id, userId: diego.id, role: "admin" },
-    // Eve is a contractor with a membership in both tenants — proof that
-    // identity is global while access is scoped per membership.
-    { tenantId: provenceSud.id, userId: eve.id, role: "member" },
+    { tenantId: luberonRetreats.id, userId: diego.id, role: "member" },
     { tenantId: luberonRetreats.id, userId: eve.id, role: "member" },
   ]);
 
@@ -112,7 +135,7 @@ async function main(): Promise<void> {
     {
       tenantId: provenceSud.id,
       actorUserId: alice.id,
-      action: "site.created",
+      action: "SITE_CREATED",
       targetType: "site",
       targetId: villasCassis.id,
       metadata: { slug: villasCassis.slug },
@@ -120,7 +143,7 @@ async function main(): Promise<void> {
     {
       tenantId: luberonRetreats.id,
       actorUserId: carla.id,
-      action: "site.created",
+      action: "SITE_CREATED",
       targetType: "site",
       targetId: masDuLuberon.id,
       metadata: { slug: masDuLuberon.slug },
@@ -132,6 +155,14 @@ async function main(): Promise<void> {
     `  tenants: provence-sud (${provenceSud.id}), luberon-retreats (${luberonRetreats.id})`,
   );
   console.log(`  sites:   villas-cassis (${villasCassis.id}), mas-du-luberon (${masDuLuberon.id})`);
+  console.log(
+    `  login password for every seed user: "${SEED_PASSWORD}" (seed-only, see docs/AUTHENTICATION.md)`,
+  );
+  console.log("  alice@provence-sud.test      OWNER of Provence Sud");
+  console.log("  bob@provence-sud.test        MEMBER of Provence Sud");
+  console.log("  eve@contractor.test          ADMIN of Provence Sud, MEMBER of Luberon Retreats");
+  console.log("  carla@luberon-retreats.test  OWNER of Luberon Retreats");
+  console.log("  diego@luberon-retreats.test  MEMBER of Luberon Retreats");
 }
 
 main()

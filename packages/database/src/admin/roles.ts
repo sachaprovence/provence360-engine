@@ -54,16 +54,19 @@ async function ensureLoginRole(db: Db, { user, password }: Creds): Promise<void>
 export interface EnsuredRoles {
   appCreds: Creds;
   resolverCreds: Creds;
+  authCreds: Creds;
 }
 
-/** Idempotently creates (or syncs the password of) the app and resolver login roles. */
+/** Idempotently creates (or syncs the password of) the app/resolver/auth login roles. */
 export async function ensureLoginRoles(db: Db): Promise<EnsuredRoles> {
   const env = loadDbEnv();
   const appCreds = credsFromUrl(env.DATABASE_URL_APP);
   const resolverCreds = credsFromUrl(env.DATABASE_URL_RESOLVER);
+  const authCreds = credsFromUrl(env.DATABASE_URL_AUTH);
 
   await ensureLoginRole(db, appCreds);
   await ensureLoginRole(db, resolverCreds);
+  await ensureLoginRole(db, authCreds);
 
-  return { appCreds, resolverCreds };
+  return { appCreds, resolverCreds, authCreds };
 }

@@ -12,14 +12,22 @@ Dependency graph (no cycles):
 ```
 validation, config
         |
-     database  (schema, RLS policies, migrations, 3 DB clients)
+     database  (schema, RLS policies, migrations, 4 DB clients)
         |
       tenant    (withTenantContext)
        /   \
-  domains   sites          observability, auth
+  domains   sites          observability
        \   /                     |
-      apps/web, apps/admin, apps/worker
+        \ /                    auth   (password/session/permissions/
+         \                              withAuthorizedTenantContext)
+          \                     /
+           apps/web, apps/admin, apps/worker
 ```
+
+`auth` depends on `tenant`, `observability`, `database`, and `validation` —
+never the reverse. `apps/admin` is the only app that depends on `auth`;
+`apps/web`'s public renderer has no login concept and never will (hostname
+resolution stays pre-tenant and anonymous — see [ADR 0005](adr/0005-hostname-site-resolution.md)).
 
 `testkit` depends on `database` only, and is a `devDependency` of every
 package whose tests need real fixtures (`tenant`, `domains`, `sites`,
@@ -40,10 +48,26 @@ Host -> DomainResolver -> Site -> Tenant -> PublishedRelease -> Renderer
 
 Why the DomainResolver can't use `withTenantContext`: that function requires
 a `tenantId` _before_ it can run, and resolving the tenant from a hostname
-is precisely the step that doesn't have one yet. This is the one
-intentional, reviewed exception to "no query without tenant context" — see
-[docs/SECURITY.md](SECURITY.md) for how it's still kept narrow (column-level
-grants, read-only, its own Postgres role).
+is precisely the step that doesn't have one yet. This is one of two
+intentional, reviewed exceptions to "no query without tenant context" — see
+[docs/SECURITY.md](SECURITY.md) for how both are still kept narrow
+(column-level grants, dedicated Postgres roles).
+
+## The Control Plane request pipeline (`apps/admin`)
+
+```
+Cookie -> Session -> Membership -> Authorization -> Tenant Context -> RLS -> Data
+```
+
+The second exception to "no query without tenant context": authenticating
+a request and checking its Membership both have to happen _before_ a
+tenant is known, for the same structural reason hostname resolution does.
+`packages/auth`'s `provence360_auth`-backed lookups (`validateSessionToken`,
+`getMembership`) fill that gap, and
+`withAuthorizedTenantContext(...)` is the single function that chains all
+five steps and only then opens the same `withTenantContext` used
+everywhere else. See [docs/AUTHENTICATION.md](AUTHENTICATION.md) and
+[docs/AUTHORIZATION.md](AUTHORIZATION.md) for the full mechanics.
 
 ## Why packages have no build step
 
@@ -65,11 +89,12 @@ meant to run as its own container in production — its `build` script
 See [docs/MULTI_TENANCY.md](MULTI_TENANCY.md) for the full model and the
 reasoning behind each table. Summary:
 
-| Table         | tenant-scoped?     | notes                                                  |
-| ------------- | ------------------ | ------------------------------------------------------ |
-| `users`       | no                 | a global identity; scoping is via `memberships`        |
-| `tenants`     | self (`id`)        | the boundary itself                                    |
-| `memberships` | yes                | user ↔ tenant ↔ role                                   |
-| `sites`       | yes                | a tenant may own several                               |
-| `domains`     | yes (denormalized) | hostname → site; globally unique while active          |
-| `audit_logs`  | yes                | append-only — no UPDATE/DELETE policy for the app role |
+| Table         | tenant-scoped?                           | notes                                                                                                                          |
+| ------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `users`       | no                                       | a global identity; scoping is via `memberships`; carries `password_hash` (nullable), unreachable by the tenant-scoped app role |
+| `sessions`    | no                                       | identity-plane, not tenant data; owned entirely by `provence360_auth`                                                          |
+| `tenants`     | self (`id`)                              | the boundary itself                                                                                                            |
+| `memberships` | yes                                      | user ↔ tenant ↔ role                                                                                                           |
+| `sites`       | yes                                      | a tenant may own several                                                                                                       |
+| `domains`     | yes (denormalized)                       | hostname → site; globally unique while active                                                                                  |
+| `audit_logs`  | yes, or `NULL` for identity-plane events | append-only — no UPDATE/DELETE policy for any role                                                                             |

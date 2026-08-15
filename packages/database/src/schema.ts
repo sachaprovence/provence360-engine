@@ -25,6 +25,14 @@ import { v7 as uuidv7 } from "uuid";
 // ---------------------------------------------------------------------------
 export const appRole = pgRole("provence360_app").existing();
 export const resolverRole = pgRole("provence360_resolver").existing();
+// Fourth role (v0.2): the narrow, pre-tenant-context path for
+// authentication and authorization *lookups* — session validation,
+// membership checks, the tenant switcher. Structurally the same shape as
+// `resolverRole` (a request has no tenant yet, so it can't go through
+// withTenantContext) but for a completely disjoint set of tables/columns:
+// this role can never see site/domain content, and the resolver role can
+// never see a password hash or a session. See docs/AUTHENTICATION.md.
+export const authRole = pgRole("provence360_auth").existing();
 
 const id = () =>
   uuid("id")
@@ -66,6 +74,14 @@ export const users = pgTable(
     id: id(),
     email: text("email").notNull(),
     name: text("name"),
+    // Nullable: an account with no password yet (future OAuth/passkey-only
+    // users — see docs/adr/0006-authentication-strategy.md). Never selected
+    // by `provence360_app` — see the column-restricted GRANT in
+    // packages/database/src/admin/setup-roles.ts and the migration in
+    // packages/database/migrations/0003_auth_role_grants.sql. An API
+    // response, a log line, or an AuditLog row that contains this value is
+    // a bug, not a feature.
+    passwordHash: text("password_hash"),
     ...timestamps,
   },
   (t) => [
@@ -82,6 +98,25 @@ export const users = pgTable(
         where m.user_id = users.id
           and m.tenant_id = ${currentTenantId}
       )`,
+    }),
+    // Pre-tenant-context lookups only: "find the user with this email" for
+    // login, "load this session's user" for session validation. Column
+    // grants (not this policy) are what keep this role from ever reading
+    // password_hash of a row it has no business touching — this policy just
+    // says "any row, if the columns you asked for are ones you're granted."
+    pgPolicy("auth_lookup_users", {
+      for: "select",
+      to: authRole,
+      using: sql`true`,
+    }),
+    // Password changes only (see packages/auth/src/password.ts). Column
+    // grants restrict this to password_hash/updated_at — this role can
+    // never change a user's email or name.
+    pgPolicy("auth_update_users", {
+      for: "update",
+      to: authRole,
+      using: sql`true`,
+      withCheck: sql`true`,
     }),
   ],
 ).enableRLS();
@@ -108,6 +143,15 @@ export const tenants = pgTable(
       to: appRole,
       using: sql`id = ${currentTenantId}`,
       withCheck: sql`id = ${currentTenantId}`,
+    }),
+    // Tenant switcher (list the tenants a user belongs to, by name) and
+    // membership-check target validation (is this tenant even active?) both
+    // run before a tenant context exists. Column grants restrict this to
+    // display-safe fields (id, slug, name, status) — see setup-roles.ts.
+    pgPolicy("auth_read_tenants", {
+      for: "select",
+      to: authRole,
+      using: sql`true`,
     }),
   ],
 ).enableRLS();
@@ -141,6 +185,18 @@ export const memberships = pgTable(
       to: appRole,
       using: tenantMatch,
       withCheck: tenantMatch,
+    }),
+    // The authorization check itself: "does this user have a membership in
+    // this tenant, and with what role?" — necessarily runs *before*
+    // withTenantContext can open, since its result is what decides whether
+    // to open it at all. Read-only: this role never creates, changes, or
+    // removes a membership — that stays exclusively a tenant-scoped
+    // operation via provence360_app (packages/domains-equivalent
+    // repository, permission-checked).
+    pgPolicy("auth_read_memberships", {
+      for: "select",
+      to: authRole,
+      using: sql`true`,
     }),
   ],
 ).enableRLS();
@@ -241,14 +297,21 @@ export const domains = pgTable(
 // INSERT policies but no UPDATE/DELETE policy at all, so those commands are
 // denied by RLS's default-deny regardless of tenant_id. An audit trail that
 // can be edited by the same role it's auditing is not a trail.
+//
+// `tenant_id` is nullable (v0.2): identity-plane events — login success,
+// login failure, logout — happen *before* any tenant is selected, so they
+// have no tenant to attach to. They are written by `provence360_auth` with
+// tenant_id = NULL, and are structurally invisible to `provence360_app`
+// (`tenant_id = <current tenant>` is never true for a NULL row) — a tenant
+// can never see platform-wide auth events, only its own tenant-scoped
+// activity. Reading the NULL-tenant rows back is a platform-admin concern,
+// deliberately out of scope for v0.2 — see docs/adr/0009-platform-admin-vs-tenant-owner.md.
 // ---------------------------------------------------------------------------
 export const auditLogs = pgTable(
   "audit_logs",
   {
     id: id(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
     actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
     action: text("action").notNull(),
     targetType: text("target_type").notNull(),
@@ -268,6 +331,52 @@ export const auditLogs = pgTable(
       for: "insert",
       to: appRole,
       withCheck: tenantMatch,
+    }),
+    // provence360_auth may only ever write/read the platform-level
+    // (tenant_id IS NULL) slice — structurally incapable of forging a
+    // tenant-scoped audit row, and incapable of reading any tenant's trail.
+    pgPolicy("auth_insert_audit_logs", {
+      for: "insert",
+      to: authRole,
+      withCheck: sql`tenant_id is null`,
+    }),
+    pgPolicy("auth_read_audit_logs", {
+      for: "select",
+      to: authRole,
+      using: sql`tenant_id is null`,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// sessions — an opaque, revocable proof of identity, deliberately separate
+// from `users`. `id` is the SHA-256 hex digest of the raw session token
+// (see packages/auth/src/session.ts) — the raw token itself is never
+// stored anywhere, only its hash, the same defense-in-depth reasoning as
+// storing a password hash instead of the password. Owned entirely by
+// `provence360_auth`; `provence360_app` (tenant-scoped code) has no grant
+// on this table at all — a session is an identity-plane concept, not
+// tenant data.
+// ---------------------------------------------------------------------------
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("sessions_user_id_idx").on(t.userId),
+    pgPolicy("auth_manage_sessions", {
+      for: "all",
+      to: authRole,
+      using: sql`true`,
+      withCheck: sql`true`,
     }),
   ],
 ).enableRLS();

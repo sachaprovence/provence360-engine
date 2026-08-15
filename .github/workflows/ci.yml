@@ -9,6 +9,7 @@ env:
   DATABASE_URL: postgresql://provence360:provence360@localhost:5432/provence360_dev
   DATABASE_URL_APP: postgresql://provence360_app:provence360_app@localhost:5432/provence360_dev
   DATABASE_URL_RESOLVER: postgresql://provence360_resolver:provence360_resolver@localhost:5432/provence360_dev
+  DATABASE_URL_AUTH: postgresql://provence360_auth:provence360_auth@localhost:5432/provence360_dev
   ROOT_DOMAIN: provence360.app
   NODE_ENV: development
 
@@ -63,6 +64,7 @@ jobs:
           DATABASE_URL: postgresql://provence360:provence360@localhost:5432/provence360_test
           DATABASE_URL_APP: postgresql://provence360_app:provence360_app@localhost:5432/provence360_test
           DATABASE_URL_RESOLVER: postgresql://provence360_resolver:provence360_resolver@localhost:5432/provence360_test
+          DATABASE_URL_AUTH: postgresql://provence360_auth:provence360_auth@localhost:5432/provence360_test
           NODE_ENV: test
         run: pnpm test
 

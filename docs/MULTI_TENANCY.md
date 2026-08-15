@@ -54,6 +54,15 @@ RLS on `users` follows from this: there's no `tenant_id` to compare, so
 visibility is instead `EXISTS (... memberships WHERE user_id = users.id AND
 tenant_id = current tenant)` — see [SECURITY.md](SECURITY.md#rls-policies-table-by-table).
 
+As of Foundation v0.2, `memberships` is also what
+`apps/admin` (the Control Plane) checks on every single request to decide
+whether a session's user may act in a given tenant at all — see
+[docs/AUTHORIZATION.md](AUTHORIZATION.md). The tenancy boundary and the
+authorization boundary are the same table, checked the same way, for the
+same reason: a user's standing in a tenant is never anything other than
+"does a Membership row for (user, tenant) exist, and what role does it
+carry."
+
 ## `withTenantContext` — the only door in
 
 ```ts

@@ -1,5 +1,6 @@
+import { desc, eq } from "drizzle-orm";
 import type { AppTx } from "@provence360/database";
-import { auditLogs } from "@provence360/database";
+import { auditLogs, users } from "@provence360/database";
 import { requireCurrentTenantId } from "@provence360/tenant";
 
 /**
@@ -35,4 +36,30 @@ export async function recordAuditLog(
     .returning();
   if (!row) throw new Error("Failed to record audit log entry");
   return row;
+}
+
+/**
+ * Recent audit trail entries for the current tenant, newest first, with
+ * the actor's email resolved when known. `tenant_read_audit_logs`'s
+ * `USING (tenant_id = current tenant)` means this can never see another
+ * tenant's rows or the platform-level (tenant_id IS NULL) auth events —
+ * see docs/SECURITY.md.
+ */
+export async function listAuditLogs(tx: AppTx, limit = 100) {
+  const tenantId = requireCurrentTenantId();
+  return tx
+    .select({
+      id: auditLogs.id,
+      action: auditLogs.action,
+      targetType: auditLogs.targetType,
+      targetId: auditLogs.targetId,
+      metadata: auditLogs.metadata,
+      createdAt: auditLogs.createdAt,
+      actorEmail: users.email,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(users.id, auditLogs.actorUserId))
+    .where(eq(auditLogs.tenantId, tenantId))
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limit);
 }

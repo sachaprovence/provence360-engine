@@ -16,6 +16,10 @@ export const dbEnvSchema = z.object({
   DATABASE_URL: postgresUrl,
   DATABASE_URL_APP: postgresUrl,
   DATABASE_URL_RESOLVER: postgresUrl,
+  // Fourth connection (v0.2): the narrow, pre-tenant-context role used for
+  // session validation, login, and membership/authorization lookups. See
+  // docs/AUTHENTICATION.md and packages/database/src/schema.ts's `authRole`.
+  DATABASE_URL_AUTH: postgresUrl,
 });
 
 export const platformEnvSchema = z.object({

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@provence360/database": "workspace:*",
+    "@provence360/observability": "workspace:*",
     "@provence360/tenant": "workspace:*",
     "drizzle-orm": "0.45.2"
   },

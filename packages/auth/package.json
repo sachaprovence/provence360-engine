@@ -11,13 +11,19 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@provence360/database": "workspace:*"
+    "@node-rs/argon2": "2.1.0",
+    "@provence360/database": "workspace:*",
+    "@provence360/observability": "workspace:*",
+    "@provence360/tenant": "workspace:*",
+    "@provence360/validation": "workspace:*",
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "@provence360/config": "workspace:*",
+    "@provence360/testkit": "workspace:*",
     "@types/node": "22.20.1",
     "eslint": "9.39.5",
     "typescript": "5.9.3",

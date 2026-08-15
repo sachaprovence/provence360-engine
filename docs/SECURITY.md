@@ -7,11 +7,23 @@ read, modify, or delete Tenant B's data — even if Tenant A's code has a
 bug, even if it knows Tenant B's UUIDs outright.** Everything below is in
 service of that one sentence.
 
-Foundation v0.1 has no login flow yet (see [ROADMAP.md](ROADMAP.md)), so
-today the property is proven at the data-access layer, exercised directly
-by tests, rather than through an authenticated HTTP request. That's
-deliberate: the isolation guarantee has to hold at the database layer
-regardless of what gets built on top of it later.
+Foundation v0.2 adds a second property on top: **a request is never
+granted tenant access because of what a URL says — only because of what a
+verified session's Membership says.** The chain is always
+`User -> Authenticated Session -> Membership -> Authorization -> Tenant
+Context -> PostgreSQL RLS -> Data`, never `User -> browser-supplied
+tenantId -> Data`. See [docs/AUTHENTICATION.md](AUTHENTICATION.md) and
+[docs/AUTHORIZATION.md](AUTHORIZATION.md) for the full mechanics; this
+document stays focused on the database-level enforcement both properties
+ultimately rest on.
+
+Foundation v0.1 proved the first property at the data-access layer alone,
+exercised directly by tests rather than through an authenticated HTTP
+request — there was no login flow yet. v0.2 keeps every one of those
+guarantees (nothing about RLS, `withTenantContext`, or the resolver
+changed) and adds real authentication/authorization on top, proven the
+same way: real Postgres, real HTTP requests, real Playwright sessions, no
+mocked auth.
 
 ## Defense in depth
 
@@ -47,24 +59,34 @@ the active context, even bypassing the repository helper" test in
 `packages/sites/src/site-repository.test.ts` exists specifically to prove
 that.
 
-## The three roles
+## The four roles
 
-Three distinct Postgres roles, three distinct connection strings
-(`DATABASE_URL`, `DATABASE_URL_APP`, `DATABASE_URL_RESOLVER` — see
-`.env.example`). Collapsing them into one connection would silently
-collapse the security model.
+Four distinct Postgres roles, four distinct connection strings
+(`DATABASE_URL`, `DATABASE_URL_APP`, `DATABASE_URL_RESOLVER`,
+`DATABASE_URL_AUTH` — see `.env.example`). Collapsing them into one
+connection would silently collapse the security model.
 
-| Role                   | Used by                                                                                  | Privileges                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provence360` (admin)  | migrations, dev seed, `packages/testkit` fixtures, `apps/admin`'s cross-tenant dashboard | Table owner — Postgres never applies RLS to an owner. Full, unconditional access. **Never used to serve a tenant-facing request.**                                                                                                                                                                                                                |
-| `provence360_app`      | every tenant-scoped repository, always via `withTenantContext()`                         | Full DML on all six tables, but every query is filtered by the RLS policies below. Cannot see or touch a row outside the active `app.tenant_id`.                                                                                                                                                                                                  |
-| `provence360_resolver` | `packages/domains/src/resolver.ts` only                                                  | `SELECT`-only, and only on specific _columns_ of `sites` and `domains` (`id`, `tenant_id`, `status`, `hostname`, `site_id`, `is_primary` — never `name`, never anything content-shaped). Granted a permissive `USING (true)` RLS policy because its whole job is cross-tenant hostname lookup, which by definition runs before a tenant is known. |
+| Role                   | Used by                                                                                        | Privileges                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provence360` (admin)  | migrations, dev seed, `packages/testkit` fixtures                                              | Table owner — Postgres never applies RLS to an owner. Full, unconditional access. **Never used to serve a tenant-facing request.**                                                                                                                                                                                                                                                           |
+| `provence360_app`      | every tenant-scoped repository, always via `withTenantContext()`                               | Full DML on all tables it's granted, but every query is filtered by the RLS policies below. Cannot see or touch a row outside the active `app.tenant_id`. **No grant on `sessions` at all**, and on `users` only `SELECT (id, email, name, created_at, updated_at)` — `password_hash` is unreachable through this role, full stop.                                                           |
+| `provence360_resolver` | `packages/domains/src/resolver.ts` only                                                        | `SELECT`-only, and only on specific _columns_ of `sites` and `domains` (`id`, `tenant_id`, `status`, `hostname`, `site_id`, `is_primary` — never `name`, never anything content-shaped). Granted a permissive `USING (true)` RLS policy because its whole job is cross-tenant hostname lookup, which by definition runs before a tenant is known.                                            |
+| `provence360_auth`     | `packages/auth` only — session validation, login, membership/tenant lookups pre-tenant-context | `SELECT`/`INSERT`/`UPDATE`/`DELETE` on `sessions` (the only role that touches it); `SELECT` plus `UPDATE (password_hash, updated_at)` on `users`; `SELECT`-only on `memberships`/`tenants`; `SELECT`/`INSERT` on `audit_logs`, restricted by RLS to `tenant_id IS NULL` rows only. **No grant on `sites` or `domains` at all.** See [ADR 0008](adr/0008-domain-resolver-grant-hardening.md). |
 
 `packages/database/src/scripts/setup-roles.ts` (via `pnpm db:setup-roles`)
-creates/updates the app and resolver roles idempotently, deriving username
-_and_ password from `DATABASE_URL_APP`/`DATABASE_URL_RESOLVER` so the role
-Postgres actually has can never drift from the connection string the app
-uses to reach it.
+creates/updates all four roles idempotently, deriving username _and_
+password from each `DATABASE_URL_*` so the role Postgres actually has can
+never drift from the connection string the app uses to reach it. Every
+table- and column-level `GRANT` (as opposed to the role itself and its
+`CONNECT`/`USAGE` privileges) lives in a versioned migration
+(`packages/database/migrations/0003_auth_role_grants.sql`), not in that
+script — see [ADR 0008](adr/0008-domain-resolver-grant-hardening.md) for
+why that distinction matters.
+
+The resolver and auth roles' grants are fully disjoint by design: the
+resolver can never see a password hash or a session; the auth role can
+never see a site's or domain's content. Proven directly (not just assumed)
+by `packages/auth/src/role-boundaries.test.ts`.
 
 ## How `withTenantContext` actually enforces the boundary
 
@@ -94,9 +116,11 @@ Defined in `packages/database/src/schema.ts`, next to each table:
 
 - **`tenants`** — `id = current_setting('app.tenant_id', true)::uuid`. A tenant can only ever see its own row.
 - **`memberships`, `sites`, `domains`** — `tenant_id = current_setting('app.tenant_id', true)::uuid`, for all four commands (`SELECT`/`INSERT`/`UPDATE`/`DELETE`), as both the `USING` (which rows are visible) and `WITH CHECK` (which rows may be written) clause. A write that tries to set the wrong `tenant_id` is rejected by `WITH CHECK`, not just hidden from later reads.
-- **`users`** — no `tenant_id` column (see [MULTI_TENANCY.md](MULTI_TENANCY.md) for why). Visibility is instead `EXISTS (SELECT 1 FROM memberships WHERE user_id = users.id AND tenant_id = current tenant)` — a user is visible only to a tenant it actually has a membership in.
-- **`audit_logs`** — `SELECT` and `INSERT` policies exist for the app role; **no `UPDATE`/`DELETE` policy does**. With RLS enabled, an operation with no matching permissive policy is denied outright, regardless of `tenant_id`. The audit trail is append-only at the database level, not by application convention — see the immutability tests in `packages/observability/src/audit-log.test.ts`.
-- **`sites`, `domains`** additionally carry a second, `SELECT`-only, `USING (true)` policy granted to `provence360_resolver` — see [the three roles](#the-three-roles).
+- **`users`** — no `tenant_id` column (see [MULTI_TENANCY.md](MULTI_TENANCY.md) for why). Visibility for the app role is `EXISTS (SELECT 1 FROM memberships WHERE user_id = users.id AND tenant_id = current tenant)` — a user is visible only to a tenant it actually has a membership in. A separate, additive policy (`auth_lookup_users`) permits `provence360_auth` to `SELECT` any row (login has to find a user by email before any tenant is known) and `UPDATE` only `password_hash`/`updated_at` (`auth_update_users`) — column grants, not RLS, are what stop that role from touching anything else on the row.
+- **`audit_logs`** — `SELECT` and `INSERT` policies exist for the app role, scoped to the active tenant; **no `UPDATE`/`DELETE` policy does**. With RLS enabled, an operation with no matching permissive policy is denied outright, regardless of `tenant_id`. The audit trail is append-only at the database level, not by application convention — see the immutability tests in `packages/observability/src/audit-log.test.ts`. A second pair of policies (`auth_insert_audit_logs`/`auth_read_audit_logs`) permits `provence360_auth` to insert/read only rows where `tenant_id IS NULL` — the identity-plane events (`AUTH_LOGIN_SUCCESS`, `AUTH_LOGIN_FAILURE`, `AUTH_LOGOUT`) that happen before any tenant is selected. This role is structurally incapable of forging a tenant-scoped audit entry, or of reading one — proven in both directions by `packages/auth/src/audit.test.ts`.
+- **`sessions`** — one policy, `auth_manage_sessions`, `FOR ALL` to `provence360_auth` only. `provence360_app` has no grant on this table whatsoever (not even a denying RLS policy is needed — there's nothing to authorize in the first place). See [ADR 0007](adr/0007-session-strategy.md).
+- **`sites`, `domains`** additionally carry a second, `SELECT`-only, `USING (true)` policy granted to `provence360_resolver` — see [the four roles](#the-four-roles).
+- **`memberships`, `tenants`** additionally carry a `SELECT`-only policy granted to `provence360_auth` (`auth_read_memberships`/`auth_read_tenants`) — the read side of `getMembership()`/`listMembershipsForUser()`, which have to run before `withTenantContext` can open. Membership _mutations_ never go through this role; they go through `packages/auth/src/membership-repository.ts`, tenant-scoped and permission-checked, exactly like `sites`/`domains`.
 
 ## How the tests actually exercise RLS
 
@@ -111,8 +135,23 @@ subject to the exact same RLS policies production code runs under. Nothing
 here is mocked — a broken policy fails a real query against a real
 database, not an assertion against an in-memory stand-in.
 
+The same discipline extends to authentication/authorization:
+`packages/auth`'s test suite (session lifecycle, permission matrix, login
+including the rate limiter, the owner invariant under real concurrency,
+role-boundary regression tests) exercises real sessions and real
+Postgres, never a mocked `validateSessionToken`. `apps/admin/e2e/` drives a
+real browser against a real running Next.js server and a real database —
+unauthenticated redirects, invalid/valid login, cross-tenant URL
+tampering, permission-gated UI, tenant switching, and logout invalidation
+are all proven end to end, not asserted against a stubbed auth layer. See
+[docs/AUTHENTICATION.md](AUTHENTICATION.md) and
+[docs/AUTHORIZATION.md](AUTHORIZATION.md).
+
 ## Known gaps (tracked, not hidden)
 
-- No authentication yet. `apps/admin` is an unauthenticated, cross-tenant, read-only dashboard — do not deploy it publicly reachable. See [ROADMAP.md](ROADMAP.md).
-- `docker-compose.yml` uses a fixed dev password (`provence360`). Fine for local dev; a real deployment must use secrets management for `DATABASE_URL*`.
-- No rate limiting, no WAF, no secrets scanning in CI beyond "don't commit `.env`" — out of scope for Foundation v0.1.
+- **No password-reset / email-verification flow.** A user is provisioned by an existing tenant OWNER/ADMIN or the seed script; there is no self-service "forgot password." See [docs/AUTHENTICATION.md](AUTHENTICATION.md).
+- **Login rate limiting is per-email, not per-IP.** No trusted client-IP plumbing exists — see [docs/AUTHENTICATION.md#rate-limiting](AUTHENTICATION.md#rate-limiting) for why that's a deliberate, stated gap rather than a naively-trusted header.
+- **No platform super-admin.** There is no way to act across every tenant through the web application — only direct database/infrastructure access. See [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md).
+- `docker-compose.yml` uses fixed dev passwords for every role. Fine for local dev; a real deployment must use secrets management for every `DATABASE_URL*`.
+- No WAF, no secrets scanning in CI beyond "don't commit `.env`" — out of scope for this phase.
+- No CSRF token beyond Server Actions' built-in same-origin check + `SameSite=Lax` — see [docs/AUTHENTICATION.md#csrf](AUTHENTICATION.md#csrf). Any future non-Server-Action mutating endpoint needs its own explicit protection.

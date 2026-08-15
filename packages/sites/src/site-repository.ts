@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { AppTx, SiteStatus } from "@provence360/database";
 import { sites } from "@provence360/database";
+import { recordAuditLog } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 
 /**
@@ -11,10 +12,15 @@ import { requireCurrentTenantId } from "@provence360/tenant";
  * policy's `withCheck` clause would still reject a row whose `tenant_id`
  * doesn't match the transaction's `app.tenant_id`. Two independent layers,
  * either one alone would have stopped this.
+ *
+ * `actorUserId` is optional (v0.1 callers — tests, the seed script — have
+ * no authenticated actor) but every v0.2 call site reached through
+ * `withAuthorizedTenantContext` has one and should pass it, so the
+ * resulting SITE_CREATED audit entry is attributable.
  */
 export async function createSite(
   tx: AppTx,
-  input: { slug: string; name: string; status?: SiteStatus },
+  input: { slug: string; name: string; status?: SiteStatus; actorUserId?: string },
 ) {
   const tenantId = requireCurrentTenantId();
 
@@ -28,6 +34,15 @@ export async function createSite(
     })
     .returning();
   if (!row) throw new Error("Failed to create site");
+
+  await recordAuditLog(tx, {
+    ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
+    action: "SITE_CREATED",
+    targetType: "site",
+    targetId: row.id,
+    metadata: { slug: row.slug, name: row.name },
+  });
+
   return row;
 }
 
