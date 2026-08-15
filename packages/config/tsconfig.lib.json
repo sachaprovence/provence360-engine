@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // "Bundler" resolution (inherited from tsconfig.base.json) rather than
+    // "NodeNext": relative imports across this codebase are extensionless
+    // ("./schema", not "./schema.js"). NodeNext would require the latter,
+    // which Next.js's bundlers (both Turbopack and webpack, as of Next 16)
+    // fail to resolve against transpilePackages source that hasn't gone
+    // through a build step — they look for a literal schema.js file, find
+    // none, and error, instead of following TypeScript's "NodeNext .js
+    // specifier maps to a .ts file" rule the way tsc/tsx/Vitest do.
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

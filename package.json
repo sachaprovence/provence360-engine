@@ -1,0 +1,32 @@
+{
+  "name": "provence360-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundation multi-tenant engine for hosting hundreds of seasonal-rental sites from a single technical base.",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test --concurrency=1",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "pnpm format:check && turbo run lint typecheck && pnpm test && turbo run build",
+    "db:generate": "pnpm --filter @provence360/database run generate",
+    "db:migrate": "pnpm --filter @provence360/database run migrate",
+    "db:setup-roles": "pnpm --filter @provence360/database run setup-roles",
+    "db:seed": "pnpm --filter @provence360/database run seed",
+    "test:db:prepare": "NODE_ENV=test pnpm --filter @provence360/database run migrate && NODE_ENV=test pnpm --filter @provence360/database run setup-roles",
+    "test:e2e": "pnpm --filter @provence360/web run test:e2e",
+    "dev": "turbo run dev --parallel"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.10",
+    "typescript": "5.9.3"
+  }
+}

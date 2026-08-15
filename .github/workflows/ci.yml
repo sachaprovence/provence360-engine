@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DATABASE_URL: postgresql://provence360:provence360@localhost:5432/provence360_dev
+  DATABASE_URL_APP: postgresql://provence360_app:provence360_app@localhost:5432/provence360_dev
+  DATABASE_URL_RESOLVER: postgresql://provence360_resolver:provence360_resolver@localhost:5432/provence360_dev
+  ROOT_DOMAIN: provence360.app
+  NODE_ENV: development
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: provence360
+          POSTGRES_PASSWORD: provence360
+          POSTGRES_DB: provence360_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U provence360 -d provence360_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create the isolated test database
+        run: |
+          PGPASSWORD=provence360 psql -h localhost -U provence360 -d provence360_dev \
+            -c "CREATE DATABASE provence360_test OWNER provence360;"
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit & integration tests (real Postgres, RLS enforced)
+        env:
+          DATABASE_URL: postgresql://provence360:provence360@localhost:5432/provence360_test
+          DATABASE_URL_APP: postgresql://provence360_app:provence360_app@localhost:5432/provence360_test
+          DATABASE_URL_RESOLVER: postgresql://provence360_resolver:provence360_resolver@localhost:5432/provence360_test
+          NODE_ENV: test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Prepare dev database for e2e (migrate, roles, seed)
+        run: |
+          pnpm db:migrate
+          pnpm db:setup-roles
+          pnpm db:seed
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @provence360/web exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+coverage
+pnpm-lock.yaml
+.turbo
+*.md.snap
+
+# drizzle-kit generated, not hand-maintained
+packages/database/migrations
