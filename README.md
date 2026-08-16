@@ -37,14 +37,15 @@ Tenant
 The public request pipeline:
 
 ```
-Host -> DomainResolver -> Site -> Page -> Content -> Domain data -> Theme -> Renderer
+Host -> DomainResolver -> Site -> Published Revision -> Domain data -> Renderer
 ```
 
-Every step is real as of v0.3 — see [docs/RENDERING.md](docs/RENDERING.md)
-for exactly how, including the measured query count on a seeded page. A
-Draft → Release → Publish pipeline (freezing a Page's content into an
-immutable, versioned snapshot) is the next phase — v0.3 renders the
-**live** content of every Page directly; see [docs/ROADMAP.md](docs/ROADMAP.md).
+Since v0.4, the public site renders only an immutable, published
+Revision — never a Site's live draft. See
+[docs/PUBLISHING.md](docs/PUBLISHING.md) for the full Draft → Validation →
+Immutable Revision → Publication → Public Runtime model, and
+[docs/RENDERING.md](docs/RENDERING.md) for exactly how each step works,
+including the measured query count on a seeded page.
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture,
 [docs/MULTI_TENANCY.md](docs/MULTI_TENANCY.md) /
@@ -54,13 +55,14 @@ foreign keys, not application code alone), and
 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) /
 [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) for how a request becomes a
 verified identity and then a tenant-scoped, permission-checked action. The
-six new v0.3 documents — [docs/SITE_DOMAIN.md](docs/SITE_DOMAIN.md),
+v0.3 documents — [docs/SITE_DOMAIN.md](docs/SITE_DOMAIN.md),
 [docs/CONTENT_MODEL.md](docs/CONTENT_MODEL.md),
 [docs/BLOCK_SYSTEM.md](docs/BLOCK_SYSTEM.md),
 [docs/THEMES.md](docs/THEMES.md),
 [docs/RENDERING.md](docs/RENDERING.md), and
-[docs/LOCALIZATION.md](docs/LOCALIZATION.md) — cover everything new in
-this phase in depth.
+[docs/LOCALIZATION.md](docs/LOCALIZATION.md) — and v0.4's
+[docs/PUBLISHING.md](docs/PUBLISHING.md) cover everything since the
+foundation in depth.
 
 ## Stack
 
@@ -106,6 +108,7 @@ pnpm install
 pnpm db:migrate                  # applies schema migrations
 pnpm db:setup-roles              # creates the app/resolver/auth DB roles (idempotent)
 pnpm db:seed                     # 2 tenants, sites, properties/units/pages/themes, users
+pnpm db:publish-seed             # v0.4: publishes each seeded site so the public runtime has something to render
 
 pnpm dev                         # apps/web on :3000, apps/admin on :3001
 ```
@@ -125,9 +128,11 @@ that same published, seed-only password; see
 [docs/AUTHENTICATION.md#seed-data](docs/AUTHENTICATION.md#seed-data----never-production-credentials)
 and never reuse it anywhere real. From a Site's detail page you can reach
 the minimal **Site Editor** (Pages, block editing, Properties, Units,
-Amenities, Theme) added in v0.3 — deliberately technical, no drag-and-drop,
-enough to validate the model. Every edit is live immediately: v0.3 has no
-Draft/Publish step yet (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+Amenities, Theme) added in v0.3, and — new in v0.4 — a **Publishing**
+section: edit the draft, preview it, Publish, view the revision/publication
+history, and Rollback. The public site (`apps/web`) only ever renders the
+currently _published_ Revision, never the draft — see
+[docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 ### Verifying the whole repo
 
@@ -148,7 +153,7 @@ permission-gated UI, tenant switching — all against real sessions, no
 mocked auth):
 
 ```bash
-pnpm db:migrate && pnpm db:setup-roles && pnpm db:seed
+pnpm db:migrate && pnpm db:setup-roles && pnpm db:seed && pnpm db:publish-seed
 pnpm --filter @provence360/web exec playwright install --with-deps chromium
 pnpm test:e2e
 ```

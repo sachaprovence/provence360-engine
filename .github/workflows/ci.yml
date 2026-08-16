@@ -85,11 +85,12 @@ jobs:
           NODE_ENV: production
         run: pnpm build
 
-      - name: Prepare dev database for e2e (migrate, roles, seed)
+      - name: Prepare dev database for e2e (migrate, roles, seed, publish)
         run: |
           pnpm db:migrate
           pnpm db:setup-roles
           pnpm db:seed
+          pnpm db:publish-seed
 
       - name: Install Playwright browsers
         run: pnpm --filter @provence360/web exec playwright install --with-deps chromium

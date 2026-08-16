@@ -36,8 +36,8 @@ its own:
    nothing stops a bug from calling the database without ever consulting
    it.
 2. **Repository/service tenant-awareness** — every repository function in
-   `packages/sites`, `packages/domains`, and (new in v0.3)
-   `packages/rentals`/`packages/content` filters explicitly by
+   `packages/sites`, `packages/domains`, `packages/rentals`/`packages/content`
+   (v0.3), and (new in v0.4) `packages/publishing` filters explicitly by
    `tenant_id`, derived via `requireCurrentTenantId()`, and _never_ accepts
    a `tenantId` argument from its caller. A repository function cannot be
    tricked into using the wrong tenant by a caller passing the wrong value,
@@ -45,22 +45,28 @@ its own:
 3. **PostgreSQL Row-Level Security** — the actual, unconditional backstop.
    Enforced by Postgres itself on every query issued through the app role,
    independent of whether layers 1–2 were even reached. See below.
-4. **Composite foreign keys** (new in v0.3) — every child table added in
-   this phase (`properties`, `units`, `unit_amenities`, `pages`) carries a
-   foreign key on `(tenant_id, parent_id)` against its parent's own
-   `UNIQUE (tenant_id, id)` index, not just a plain `parent_id` FK. A row
-   whose `tenant_id` doesn't match its parent's owner is rejected by
-   Postgres at `INSERT`/`UPDATE` time (`23503`) — before RLS's `WITH
-CHECK` is even evaluated. See
+4. **Composite foreign keys** — every child table with a real parent
+   (`properties`, `units`, `unit_amenities`, `pages` in v0.3;
+   `site_revisions`, `site_publications` in v0.4) carries a foreign key on
+   `(tenant_id, parent_id)` against its parent's own `UNIQUE (tenant_id,
+id)` index, not just a plain `parent_id` FK. A row whose `tenant_id`
+   doesn't match its parent's owner is rejected by Postgres at
+   `INSERT`/`UPDATE` time (`23503`) — before RLS's `WITH CHECK` is even
+   evaluated. `sites.published_revision_id` is the one documented
+   exception — see [ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md)
+   for why, and how the same guarantee is instead enforced by
+   `packages/publishing`'s own tenant-scoped re-read + explicit `siteId`
+   check. See also
    [docs/SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls](SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls)
    and [ADR 0010](adr/0010-property-unit-ownership.md).
 5. **Explicit tests** — `packages/tenant`, `packages/domains`,
-   `packages/sites`, `packages/observability`, and (new in v0.3)
-   `packages/rentals`, `packages/content`, `packages/renderer` each carry
-   tests that create two real tenants in a real Postgres database and
-   assert one cannot read, update, delete, or attach to the other's rows —
-   including via a forged foreign key, bypassing the repository helper
-   entirely. See [Testing](#how-the-tests-actually-exercise-rls) below.
+   `packages/sites`, `packages/observability`, `packages/rentals`,
+   `packages/content`, `packages/renderer` (v0.3), and `packages/publishing`
+   (v0.4) each carry tests that create two real tenants in a real Postgres
+   database and assert one cannot read, update, delete, or attach to the
+   other's rows — including via a forged foreign key, bypassing the
+   repository helper entirely. See
+   [Testing](#how-the-tests-actually-exercise-rls) below.
 
 Layers 1 and 2 are conventions enforced by code review and TypeScript's
 type system where possible (e.g. repository functions have no `tenantId`

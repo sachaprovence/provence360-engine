@@ -13,9 +13,10 @@ import {
 // docs/SITE_DOMAIN.md, docs/CONTENT_MODEL.md). These scenarios prove the
 // minimal Site Editor against the real seeded dev database: an OWNER can
 // edit their own Site's pages/blocks/properties/units, cannot reach
-// another tenant's Site through the URL, and edits are visible
-// immediately — there is no Draft/Release/Publish pipeline yet (see
-// docs/ROADMAP.md), so what's saved here is what apps/web renders next.
+// another tenant's Site through the URL. Since v0.4 (see
+// docs/PUBLISHING.md), what's edited here is the DRAFT — it never reaches
+// apps/web until an OWNER/ADMIN explicitly publishes it (see
+// apps/admin/e2e/publishing.spec.ts and apps/web/e2e/publishing.spec.ts).
 test.describe("Site Editor — pages and blocks", () => {
   test("OWNER can view a Site's pages and open the block editor", async ({ page }) => {
     const tenantId = await tenantIdBySlug(SEED_USERS.alice.tenantSlug);

@@ -1,0 +1,36 @@
+{
+  "name": "@provence360/publishing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "publish-seed": "tsx src/scripts/publish-seeded-sites.ts"
+  },
+  "dependencies": {
+    "@provence360/content": "workspace:*",
+    "@provence360/database": "workspace:*",
+    "@provence360/observability": "workspace:*",
+    "@provence360/tenant": "workspace:*",
+    "@provence360/themes": "workspace:*",
+    "@provence360/validation": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@provence360/config": "workspace:*",
+    "@provence360/testkit": "workspace:*",
+    "@types/node": "22.20.1",
+    "eslint": "9.39.5",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

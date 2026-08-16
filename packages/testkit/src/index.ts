@@ -8,8 +8,10 @@ export {
   createPage,
   createProperty,
   createSite,
+  createSiteRevision,
   createTenant,
   createTheme,
   createUnit,
   createUser,
+  publishRevisionForTest,
 } from "./factories";

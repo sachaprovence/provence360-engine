@@ -64,22 +64,22 @@ graph acyclic.
 ## The request pipeline
 
 ```
-Host -> DomainResolver -> Site -> Page -> Content -> Domain data -> Theme -> Renderer
+Host -> DomainResolver -> Site -> Published Revision -> Domain data -> Renderer
 ```
 
 1. **Host** — the incoming request's `Host` header, read in `apps/web/app/page.tsx` via `next/headers`.
 2. **DomainResolver** (`packages/domains/src/resolver.ts`) — normalizes the hostname and looks it up against `domains`, joined to `sites`, using the narrow `provence360_resolver` Postgres role (no tenant known yet, so this can't go through `withTenantContext`). Returns `{ siteId, tenantId, siteStatus }` or `null`.
-3. **Site** — once `tenantId` is known, everything else goes through `withTenantContext(tenantId, ...)` (`packages/tenant`), which opens an RLS-scoped transaction; the Site row is read through it.
-4. **Page** — `packages/content`'s `getPageBySlug` fetches the requested Page (the home page for `/`) — its `content` column is the ordered, validated Content Graph for that URL. See [docs/CONTENT_MODEL.md](CONTENT_MODEL.md).
-5. **Content → Domain data** — `packages/renderer`'s `renderBlocks()` walks the Page's block array; each domain-bound block (PropertySummary, UnitGrid, Amenities) loads its own real data from `packages/rentals` through the same tenant-scoped transaction, live. See [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md).
-6. **Theme** — `packages/renderer`'s `resolveSiteThemeTokens()` resolves the Site's base Theme + narrow overrides into the token set every block renders with. See [docs/THEMES.md](THEMES.md).
-7. **Renderer** — the same `renderBlocks()`/block-component code for every Site, driven entirely by the data resolved above. See [docs/RENDERING.md](RENDERING.md) for the full contract, including the measured query count on a seeded page.
+3. **Site** — once `tenantId` is known, everything else goes through `withTenantContext(tenantId, ...)` (`packages/tenant`), which opens an RLS-scoped transaction.
+4. **Published Revision** (v0.4 — `packages/publishing`'s `getPublishedRevision`) — resolves `sites.published_revision_id` and returns its immutable snapshot (Pages' content, resolved theme tokens) or `null` if the Site has never been published. This is the **only** thing that changed from v0.3: step 4 used to read the Page's live row directly; it now reads a frozen Revision instead — the live `pages` table is never touched by this pipeline at all. See [docs/PUBLISHING.md](PUBLISHING.md).
+5. **Content → Domain data** — `packages/renderer`'s `renderBlocks()` walks the Revision's frozen block array; each domain-bound block (PropertySummary, UnitGrid, Amenities) still loads its own real data from `packages/rentals` through the same tenant-scoped transaction, live — Property/Unit/Amenity data is deliberately never frozen into a Revision (see [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility)). See [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md).
+6. **Renderer** — the same `renderBlocks()`/block-component code for every Site, driven entirely by the Revision's already-resolved theme tokens and content. See [docs/RENDERING.md](RENDERING.md) for the full contract, including the measured query count on a seeded page.
 
-A future immutable `PublishedRelease` (Draft → Release → Publish) still
-doesn't exist — step 4 above reads the Page's **live** row directly, no
-snapshot. See [docs/ROADMAP.md](ROADMAP.md) and
-[docs/SITE_DOMAIN.md](SITE_DOMAIN.md#future-release-compatibility) for
-what's already designed to make that addition non-breaking when it lands.
+The immutable `PublishedRelease` step this document used to describe as
+future/non-existent is `packages/publishing`'s Revision, landed in v0.4 —
+see [docs/PUBLISHING.md](PUBLISHING.md) and
+[ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md) for the full
+model, and [docs/SITE_DOMAIN.md](SITE_DOMAIN.md#future-release-compatibility)
+for the v0.3 design that made this addition non-breaking.
 
 Why the DomainResolver can't use `withTenantContext`: that function requires
 a `tenantId` _before_ it can run, and resolving the tenant from a hostname

@@ -1,23 +1,22 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { eq } from "drizzle-orm";
-import { getPageBySlug } from "@provence360/content";
-import { sites } from "@provence360/database";
 import { resolveSiteByHostname } from "@provence360/domains";
-import { renderBlocks, resolveSiteThemeTokens, type RenderContext } from "@provence360/renderer";
+import { getPublishedRevision } from "@provence360/publishing";
+import { renderBlocks, type RenderContext } from "@provence360/renderer";
 import { withTenantContext } from "@provence360/tenant";
 
-// The public request pipeline this Foundation exists to prove (v0.3):
+// The public request pipeline (v0.4 — see docs/PUBLISHING.md):
 //
-//   Host -> DomainResolver -> Site -> Page -> Content -> Domain data -> Theme -> Renderer
+//   Host -> DomainResolver -> Site -> Published Revision -> Renderer
 //
 // Nothing below is specific to any one tenant or site — the exact same
 // code renders every seeded site (see packages/database/src/scripts/seed.ts
-// for "Villa des Oliviers" vs "Mas du Luberon"), driven entirely by data:
-// which Site the hostname resolves to, which Page/blocks that Site's
-// content graph holds, and which Theme (+ overrides) it references. A
-// Draft -> Release -> Publish pipeline is deferred to v0.4 (see
-// docs/ROADMAP.md) — this always renders the current, live content.
+// and packages/publishing/src/scripts/publish-seeded-sites.ts), driven
+// entirely by data. This reads ONLY `getPublishedRevision` — never the
+// live `pages`/`sites` draft rows directly — so editing a Site's draft in
+// the admin Site Editor can never change what a visitor sees until an
+// OWNER/ADMIN explicitly publishes (Invariant A/B: the public runtime
+// never depends on a mutable draft).
 export default async function SitePage() {
   const headerList = await headers();
   const host = headerList.get("host") ?? "";
@@ -30,38 +29,35 @@ export default async function SitePage() {
   const { siteId, tenantId } = resolved;
 
   const rendered = await withTenantContext(tenantId, async (tx) => {
-    const [site] = await tx.select().from(sites).where(eq(sites.id, siteId));
-    if (!site) {
-      // The domain resolved, but the tenant-scoped read (RLS-enforced)
-      // found nothing — this would mean the resolver and RLS disagree,
-      // which should be impossible. Fail loud rather than render a lie.
-      throw new Error(
-        `Resolved site ${siteId} was not visible under tenant ${tenantId}'s own context.`,
-      );
-    }
+    const published = await getPublishedRevision(tx, siteId);
+    // A Site that has never been published (or whose home page was
+    // removed from the draft before the last publish) renders nothing —
+    // the same deterministic 404 as an unresolvable hostname, so a
+    // visitor can't distinguish "never published" from "domain doesn't
+    // exist" (no information leak about a tenant's setup progress).
+    if (!published) return null;
+    const homePage = published.snapshot.pages.find((page) => page.slug === "");
+    if (!homePage) return null;
 
-    const page = await getPageBySlug(tx, site.id, "");
-    if (!page) return null;
-
-    const tokens = await resolveSiteThemeTokens(tx, site);
     const context: RenderContext = {
       tx,
       tenantId,
-      siteId: site.id,
-      locale: site.defaultLocale,
-      defaultLocale: site.defaultLocale,
-      tokens,
+      siteId,
+      locale: published.snapshot.site.defaultLocale,
+      defaultLocale: published.snapshot.site.defaultLocale,
+      tokens: published.snapshot.theme.tokens,
     };
 
-    const elements = await renderBlocks(page.content as unknown[], context);
-    return { site, tokens, elements };
+    const elements = await renderBlocks(homePage.content, context);
+    return { snapshot: published.snapshot, elements };
   });
 
   if (!rendered) {
     notFound();
   }
 
-  const { site, tokens, elements } = rendered;
+  const { snapshot, elements } = rendered;
+  const tokens = snapshot.theme.tokens;
 
   return (
     <main
@@ -80,7 +76,7 @@ export default async function SitePage() {
           fontSize: 12,
         }}
       >
-        {site.publicName ?? site.name} — Provence360 Engine
+        {snapshot.site.publicName ?? snapshot.site.name} — Provence360 Engine
       </footer>
     </main>
   );

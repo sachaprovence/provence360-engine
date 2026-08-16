@@ -83,6 +83,18 @@ billing system). The catalog exists whole regardless: adding the feature
 later is "wire up this permission," never "invent the concept of a
 permission for the first time."
 
+**v0.4 wires up `release.read`/`release.publish`** — declared since v0.1/v0.2
+but unused until the Publishing & Versioning Kernel landed (see
+[docs/PUBLISHING.md](PUBLISHING.md)). `release.read` gates viewing a Site's
+draft-vs-published status, its revision/publication history, and preview;
+`release.publish` gates `publishSite`/`rollbackSite` — both go through
+`can(role, "release.publish")` the exact same way every other mutation goes
+through its own permission, no new RBAC surface. Editing the draft itself
+(a Page's content, a Site's settings/theme) is not a new permission at all
+— it is exactly the existing `page.update`/`site.update`/`theme.update`,
+since "the draft" is the same mutable `pages`/`sites` rows the v0.3 Site
+Editor already writes to (see docs/PUBLISHING.md#what-a-draft-is).
+
 ## The owner invariant
 
 **A tenant must always have at least one active OWNER.**

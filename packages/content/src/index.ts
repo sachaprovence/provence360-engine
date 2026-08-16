@@ -28,6 +28,7 @@ export {
   BlockNotFoundError,
   InvalidReorderError,
   MediaAssetNotFoundError,
+  PageConflictError,
   PageNotFoundError,
   SiteNotFoundError,
 } from "./errors";

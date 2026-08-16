@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { AppTx, SiteStatus } from "@provence360/database";
 import { sites } from "@provence360/database";
 import { recordAuditLog } from "@provence360/observability";
@@ -9,6 +9,33 @@ export class SiteNotFoundError extends Error {
   constructor(siteId: string) {
     super(`Site "${siteId}" was not found (or does not belong to the current tenant).`);
     this.name = "SiteNotFoundError";
+  }
+}
+
+// See packages/content/src/page-repository.ts's `eqUpdatedAtMs` for why
+// this truncates to millisecond precision rather than a plain `eq()`:
+// `sites.updated_at`'s first value comes from Postgres's own `now()`
+// (microsecond precision) while every later value comes from JS's
+// `new Date()` (millisecond precision only) — comparing a caller's
+// (always millisecond-precision) `expectedUpdatedAt` against the raw
+// column would spuriously mismatch whenever the first value's
+// microseconds are non-zero.
+function eqUpdatedAtMs(column: typeof sites.updatedAt, expected: Date): SQL {
+  return sql`date_trunc('milliseconds', ${column}) = date_trunc('milliseconds', ${expected.toISOString()}::timestamptz)`;
+}
+
+/**
+ * Thrown when a caller passed `expectedUpdatedAt` (an optimistic-concurrency
+ * token — see `packages/content`'s `PageConflictError` for the same pattern
+ * applied to Pages) and the Site's actual `updatedAt` no longer matches:
+ * someone else's write already landed since the caller last read this Site.
+ * Opt-in — every v0.3 call site that never passes `expectedUpdatedAt` keeps
+ * its unconditional last-write-wins behavior.
+ */
+export class SiteConflictError extends Error {
+  constructor(siteId: string) {
+    super(`Site "${siteId}" was modified by someone else since it was last read.`);
+    this.name = "SiteConflictError";
   }
 }
 
@@ -86,18 +113,37 @@ export interface UpdateSiteSettingsInput {
   contactEmail?: string;
   contactPhone?: string;
   actorUserId?: string;
+  /** Optimistic-concurrency token — see {@link SiteConflictError}. */
+  expectedUpdatedAt?: Date;
 }
 
 export async function updateSiteSettings(tx: AppTx, input: UpdateSiteSettingsInput) {
   const tenantId = requireCurrentTenantId();
-  const { id, actorUserId, ...rest } = input;
+  const { id, actorUserId, expectedUpdatedAt, ...rest } = input;
 
   const [row] = await tx
     .update(sites)
     .set(rest)
-    .where(and(eq(sites.id, id), eq(sites.tenantId, tenantId)))
+    .where(
+      expectedUpdatedAt
+        ? and(
+            eq(sites.id, id),
+            eq(sites.tenantId, tenantId),
+            eqUpdatedAtMs(sites.updatedAt, expectedUpdatedAt),
+          )
+        : and(eq(sites.id, id), eq(sites.tenantId, tenantId)),
+    )
     .returning();
-  if (!row) throw new SiteNotFoundError(id);
+  if (!row) {
+    if (expectedUpdatedAt) {
+      const [stillExists] = await tx
+        .select({ id: sites.id })
+        .from(sites)
+        .where(and(eq(sites.id, id), eq(sites.tenantId, tenantId)));
+      if (stillExists) throw new SiteConflictError(id);
+    }
+    throw new SiteNotFoundError(id);
+  }
 
   await recordAuditLog(tx, {
     ...(actorUserId ? { actorUserId } : {}),

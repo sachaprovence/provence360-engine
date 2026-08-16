@@ -38,6 +38,12 @@ importers:
       '@provence360/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@provence360/publishing':
+        specifier: workspace:*
+        version: link:../../packages/publishing
+      '@provence360/renderer':
+        specifier: workspace:*
+        version: link:../../packages/renderer
       '@provence360/rentals':
         specifier: workspace:*
         version: link:../../packages/rentals
@@ -99,15 +105,15 @@ importers:
 
   apps/web:
     dependencies:
-      '@provence360/content':
-        specifier: workspace:*
-        version: link:../../packages/content
       '@provence360/database':
         specifier: workspace:*
         version: link:../../packages/database
       '@provence360/domains':
         specifier: workspace:*
         version: link:../../packages/domains
+      '@provence360/publishing':
+        specifier: workspace:*
+        version: link:../../packages/publishing
       '@provence360/renderer':
         specifier: workspace:*
         version: link:../../packages/renderer
@@ -139,6 +145,12 @@ importers:
       '@provence360/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@provence360/content':
+        specifier: workspace:*
+        version: link:../../packages/content
+      '@provence360/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
@@ -388,6 +400,55 @@ importers:
       eslint:
         specifier: 9.39.5
         version: 9.39.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(tsx@4.23.12))
+
+  packages/publishing:
+    dependencies:
+      '@provence360/content':
+        specifier: workspace:*
+        version: link:../content
+      '@provence360/database':
+        specifier: workspace:*
+        version: link:../database
+      '@provence360/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@provence360/tenant':
+        specifier: workspace:*
+        version: link:../tenant
+      '@provence360/themes':
+        specifier: workspace:*
+        version: link:../themes
+      '@provence360/validation':
+        specifier: workspace:*
+        version: link:../validation
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(postgres@3.4.9)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@provence360/config':
+        specifier: workspace:*
+        version: link:../config
+      '@provence360/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
+      eslint:
+        specifier: 9.39.5
+        version: 9.39.5
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
       typescript:
         specifier: 5.9.3
         version: 5.9.3

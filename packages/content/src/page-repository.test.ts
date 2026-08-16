@@ -11,6 +11,7 @@ import { UnknownBlockError } from "./block-registry";
 import {
   BlockNotFoundError,
   InvalidReorderError,
+  PageConflictError,
   PageNotFoundError,
   SiteNotFoundError,
 } from "./errors";
@@ -342,5 +343,136 @@ describe("getPageBySlug", () => {
 
     const found = await withTenantContext(tenant.id, (tx) => getPageBySlug(tx, site.id, "about"));
     expect(found?.internalName).toBe("About");
+  });
+});
+
+describe("optimistic concurrency (expectedUpdatedAt)", () => {
+  async function pageWithOneBlock(tenantId: string) {
+    const site = await createSite({ tenantId });
+    return withTenantContext(tenantId, (tx) =>
+      createPage(tx, {
+        siteId: site.id,
+        slug: "home",
+        internalName: "Home",
+        content: [{ id: "b1", type: "text", version: 1, props: { body: { fr: "Original" } } }],
+      }),
+    );
+  }
+
+  it("addBlock without expectedUpdatedAt keeps its unconditional last-write-wins behavior (v0.3 call sites unaffected)", async () => {
+    const tenant = await createTenant();
+    const page = await pageWithOneBlock(tenant.id);
+
+    await withTenantContext(tenant.id, (tx) =>
+      addBlock(tx, {
+        pageId: page.id,
+        type: "text",
+        version: 1,
+        props: { body: { fr: "no version check" } },
+      }),
+    );
+    const reloaded = await withTenantContext(tenant.id, (tx) => getPage(tx, page.id));
+    expect((reloaded?.content as unknown[]).length).toBe(2);
+  });
+
+  it("updatePageMeta with a stale expectedUpdatedAt throws PageConflictError and leaves the row unchanged", async () => {
+    const tenant = await createTenant();
+    const page = await pageWithOneBlock(tenant.id);
+    const staleUpdatedAt = page.updatedAt;
+
+    // Someone else's write lands first.
+    await withTenantContext(tenant.id, (tx) =>
+      updatePageMeta(tx, { id: page.id, internalName: "Changed by someone else" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updatePageMeta(tx, {
+          id: page.id,
+          internalName: "Stale write",
+          expectedUpdatedAt: staleUpdatedAt,
+        }),
+      ),
+    ).rejects.toThrow(PageConflictError);
+
+    const reloaded = await withTenantContext(tenant.id, (tx) => getPage(tx, page.id));
+    expect(reloaded?.internalName).toBe("Changed by someone else");
+  });
+
+  it("updatePageMeta with the correct expectedUpdatedAt succeeds", async () => {
+    const tenant = await createTenant();
+    const page = await pageWithOneBlock(tenant.id);
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updatePageMeta(tx, {
+        id: page.id,
+        internalName: "Fresh write",
+        expectedUpdatedAt: page.updatedAt,
+      }),
+    );
+    expect(updated.internalName).toBe("Fresh write");
+  });
+
+  it("addBlock with a stale expectedUpdatedAt is rejected without silently overwriting the concurrent block (Invariant H)", async () => {
+    const tenant = await createTenant();
+    const page = await pageWithOneBlock(tenant.id);
+    const staleUpdatedAt = page.updatedAt;
+
+    // A concurrent write adds a second block, bumping updatedAt.
+    await withTenantContext(tenant.id, (tx) =>
+      addBlock(tx, {
+        pageId: page.id,
+        type: "text",
+        version: 1,
+        props: { body: { fr: "concurrent" } },
+      }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        addBlock(tx, {
+          pageId: page.id,
+          type: "text",
+          version: 1,
+          props: { body: { fr: "stale caller" } },
+          expectedUpdatedAt: staleUpdatedAt,
+        }),
+      ),
+    ).rejects.toThrow(PageConflictError);
+
+    // Exactly the concurrent write's block, not a third one from the
+    // rejected stale caller.
+    const reloaded = await withTenantContext(tenant.id, (tx) => getPage(tx, page.id));
+    expect((reloaded?.content as unknown[]).length).toBe(2);
+  });
+
+  it("removeBlock and reorderBlocks also honor expectedUpdatedAt", async () => {
+    const tenant = await createTenant();
+    const page = await pageWithOneBlock(tenant.id);
+    const staleUpdatedAt = page.updatedAt;
+
+    await withTenantContext(tenant.id, (tx) =>
+      updatePageMeta(tx, { id: page.id, internalName: "bump updatedAt" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        removeBlock(tx, { pageId: page.id, blockId: "b1", expectedUpdatedAt: staleUpdatedAt }),
+      ),
+    ).rejects.toThrow(PageConflictError);
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        reorderBlocks(tx, {
+          pageId: page.id,
+          orderedBlockIds: ["b1"],
+          expectedUpdatedAt: staleUpdatedAt,
+        }),
+      ),
+    ).rejects.toThrow(PageConflictError);
+
+    // Neither rejected call touched the page.
+    const reloaded = await withTenantContext(tenant.id, (tx) => getPage(tx, page.id));
+    expect((reloaded?.content as unknown[]).length).toBe(1);
   });
 });

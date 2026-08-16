@@ -8,7 +8,7 @@ import {
   resetDatabase,
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
-import { SiteNotFoundError } from "./site-repository";
+import { SiteConflictError, SiteNotFoundError } from "./site-repository";
 import {
   createSite,
   getSiteBySlug,
@@ -128,6 +128,49 @@ describe("updateSiteSettings", () => {
         updateSiteSettings(tx, { id: siteB.id, publicName: "Hacked" }),
       ),
     ).rejects.toThrow(SiteNotFoundError);
+  });
+
+  it("with a stale expectedUpdatedAt throws SiteConflictError and leaves the row unchanged (Invariant H)", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    const staleUpdatedAt = site.updatedAt;
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteSettings(tx, { id: site.id, publicName: "Changed by someone else" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteSettings(tx, {
+          id: site.id,
+          publicName: "Stale write",
+          expectedUpdatedAt: staleUpdatedAt,
+        }),
+      ),
+    ).rejects.toThrow(SiteConflictError);
+
+    const [reloaded] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, site.id)),
+    );
+    expect(reloaded?.publicName).toBe("Changed by someone else");
+  });
+
+  it("with the correct expectedUpdatedAt (read right after creation, Postgres-native precision) succeeds", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteSettings(tx, {
+        id: site.id,
+        publicName: "Fresh write",
+        expectedUpdatedAt: site.updatedAt,
+      }),
+    );
+    expect(updated.publicName).toBe("Fresh write");
   });
 });
 

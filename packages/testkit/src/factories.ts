@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import {
   amenities,
   domains,
@@ -6,6 +7,8 @@ import {
   memberships,
   pages,
   properties,
+  siteRevisions,
+  sitePublications,
   sites,
   tenants,
   themes,
@@ -19,6 +22,7 @@ import {
   type PageType,
   type PropertyStatus,
   type PropertyType,
+  type PublicationAction,
   type SiteStatus,
   type TenantStatus,
   type ThemeStatus,
@@ -290,6 +294,55 @@ export async function createTheme(input: {
     })
     .returning();
   if (!row) throw new Error("Failed to create test theme");
+  return row;
+}
+
+export async function createSiteRevision(input: {
+  tenantId: string;
+  siteId: string;
+  revisionNumber?: number;
+  snapshot?: Record<string, unknown>;
+  createdByUserId?: string;
+}) {
+  const db = getAdminDb();
+  const [row] = await db
+    .insert(siteRevisions)
+    .values({
+      tenantId: input.tenantId,
+      siteId: input.siteId,
+      revisionNumber: input.revisionNumber ?? 1,
+      snapshot: input.snapshot ?? { site: {}, theme: { themeId: null, tokens: {} }, pages: [] },
+      createdByUserId: input.createdByUserId,
+    })
+    .returning();
+  if (!row) throw new Error("Failed to create test site revision");
+  return row;
+}
+
+/** Publishes `revisionId` for `siteId` directly (admin connection) — sets the pointer AND records history, bypassing packages/publishing's own transactional logic. Only for arranging fixtures (e.g. cross-tenant RLS tests); never use this to test publish/rollback behavior itself. */
+export async function publishRevisionForTest(input: {
+  tenantId: string;
+  siteId: string;
+  revisionId: string;
+  action?: PublicationAction;
+  publishedByUserId?: string;
+}) {
+  const db = getAdminDb();
+  await db
+    .update(sites)
+    .set({ publishedRevisionId: input.revisionId })
+    .where(eq(sites.id, input.siteId));
+  const [row] = await db
+    .insert(sitePublications)
+    .values({
+      tenantId: input.tenantId,
+      siteId: input.siteId,
+      revisionId: input.revisionId,
+      action: input.action ?? "publish",
+      publishedByUserId: input.publishedByUserId,
+    })
+    .returning();
+  if (!row) throw new Error("Failed to create test site publication");
   return row;
 }
 

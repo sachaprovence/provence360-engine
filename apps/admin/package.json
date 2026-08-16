@@ -18,6 +18,8 @@
     "@provence360/database": "workspace:*",
     "@provence360/domains": "workspace:*",
     "@provence360/observability": "workspace:*",
+    "@provence360/publishing": "workspace:*",
+    "@provence360/renderer": "workspace:*",
     "@provence360/rentals": "workspace:*",
     "@provence360/sites": "workspace:*",
     "@provence360/tenant": "workspace:*",

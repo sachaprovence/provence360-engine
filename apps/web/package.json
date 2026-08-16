@@ -13,9 +13,9 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@provence360/content": "workspace:*",
     "@provence360/database": "workspace:*",
     "@provence360/domains": "workspace:*",
+    "@provence360/publishing": "workspace:*",
     "@provence360/rentals": "workspace:*",
     "@provence360/renderer": "workspace:*",
     "@provence360/tenant": "workspace:*",
@@ -28,6 +28,8 @@
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@provence360/config": "workspace:*",
+    "@provence360/content": "workspace:*",
+    "@provence360/testkit": "workspace:*",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
