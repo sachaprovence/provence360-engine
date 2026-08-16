@@ -69,6 +69,20 @@ jobs:
         run: pnpm test
 
       - name: Build
+        # `next build` (Next.js 16 / Turbopack) always runs as a production
+        # build, but is only internally consistent if the environment says
+        # so: with NODE_ENV explicitly set to "development" (the job-level
+        # default above, which every other step is fine inheriting), the
+        # special built-in `/_global-error` page's static prerender crashes
+        # with `TypeError: Cannot read properties of null (reading
+        # 'useContext')` — a real Next.js/React inconsistency between a
+        # dev-flavored module graph and the production/static-export render
+        # path, reproduced locally by toggling only this variable with every
+        # other condition held identical to CI. Same per-step override
+        # pattern the "Unit & integration tests" step above already uses for
+        # its own different NODE_ENV need.
+        env:
+          NODE_ENV: production
         run: pnpm build
 
       - name: Prepare dev database for e2e (migrate, roles, seed)
