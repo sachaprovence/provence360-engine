@@ -1,5 +1,29 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  // Turborepo 2.x defaults to envMode "strict": any environment variable
+  // NOT declared here (or per-task) is stripped from a task's subprocess
+  // environment before it runs — even if the parent shell (or, in CI, a
+  // GitHub Actions `env:` block) set it. Locally this was masked because
+  // `packages/database/src/load-env.ts` reads `.env`/`.env.test` directly
+  // off disk via `dotenv.config()` inside each script, independent of
+  // whatever turbo passed through. CI has no `.env.test` file (never
+  // committed — see `.gitignore`), so `//#test:db:prepare`'s
+  // `migrate`/`setup-roles` scripts saw an empty environment and failed
+  // Zod validation ("DATABASE_URL: expected string"). These are pure
+  // runtime connection strings and platform config — never build inputs —
+  // so `globalPassThroughEnv` (forwarded to every task's runtime, but
+  // deliberately excluded from the cache-hash) is correct here, not
+  // `globalEnv` (which would make a cache hit depend on the exact
+  // connection string/password, wrongly, since dev/test/CI intentionally
+  // differ).
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "DATABASE_URL_APP",
+    "DATABASE_URL_RESOLVER",
+    "DATABASE_URL_AUTH",
+    "ROOT_DOMAIN",
+    "NODE_ENV"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
