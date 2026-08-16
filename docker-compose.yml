@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: provence360
+      POSTGRES_PASSWORD: provence360
+      POSTGRES_DB: provence360_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - provence360_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U provence360 -d provence360_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  provence360_pgdata:

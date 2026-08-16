@@ -1,0 +1,39 @@
+{
+  "name": "@provence360/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@provence360/content": "workspace:*",
+    "@provence360/database": "workspace:*",
+    "@provence360/domains": "workspace:*",
+    "@provence360/rentals": "workspace:*",
+    "@provence360/renderer": "workspace:*",
+    "@provence360/tenant": "workspace:*",
+    "@provence360/themes": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "next": "16.3.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@provence360/config": "workspace:*",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "dotenv": "17.4.2",
+    "eslint": "9.39.5",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
