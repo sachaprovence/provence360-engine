@@ -347,6 +347,28 @@ export const sites = pgTable(
     // fields etc. below are not.
     navigation: jsonb("navigation").notNull().default([]),
     features: jsonb("features").notNull().default({}),
+    // v0.4 — the single source of truth for "what's currently live on the
+    // public site" (see docs/PUBLISHING.md and ADR 0016). Nullable: a
+    // brand-new site has never been published.
+    //
+    // Declared here as a plain column, not `.references(...)` — `site_revisions`
+    // is declared further down this file, and Drizzle's table-config
+    // `foreignKey()` helper needs its target's columns to already be
+    // initialized bindings at the point it runs, which a forward reference
+    // from here can't satisfy (temporal dead zone). The REAL constraint
+    // still exists at the database level: migration 0010
+    // (`0010_sites_published_revision_composite_fk.sql`) hand-adds
+    // `FOREIGN KEY (tenant_id, id, published_revision_id) REFERENCES
+    // site_revisions (tenant_id, site_id, id) ON DELETE RESTRICT` via raw
+    // SQL, since Drizzle's schema DSL can't express this composite FK
+    // (same forward-reference limitation) — see ADR 0016's "Decision 1"
+    // update. That constraint is what makes "this Site's published
+    // Revision belongs to a different tenant" or "...to a different Site
+    // in the same tenant" a `23503` Postgres error, not merely something
+    // application code and RLS happen to also prevent. This column and
+    // that migration must be read together; this comment is not a
+    // substitute for reading migration 0010.
+    publishedRevisionId: uuid("published_revision_id"),
     ...timestamps,
   },
   (t) => [
@@ -719,6 +741,150 @@ export const pages = pgTable(
       for: "all",
       to: appRole,
       using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// site_revisions — an immutable snapshot of everything a Site needs to
+// render a specific, reproducible version of itself (v0.4, see
+// docs/PUBLISHING.md and ADR 0016). `snapshot` holds the Pages' `content`
+// (the only genuinely "authored, must-freeze" data per
+// docs/SITE_DOMAIN.md#future-release-compatibility) plus the Site's own
+// presentation fields and its fully *resolved* theme tokens at the moment
+// the revision was created — never a live `themeId` reference, so a later
+// re-theme of the Site can't retroactively change how an already-published
+// Revision looked. Property/Unit/Amenity data is deliberately NOT
+// snapshotted (same ADR): a PropertySummary/UnitGrid block still shows
+// *today's* Property data even under an old Revision, exactly like a
+// printed brochure with a phone number on it.
+//
+// Append-only by construction, the same pattern as `audit_logs` above: no
+// UPDATE/DELETE policy exists for `provence360_app` at all, so those
+// commands are denied by RLS's default-deny regardless of tenant_id — a
+// Revision cannot be edited in place by a coding mistake, only ever
+// created fresh.
+// ---------------------------------------------------------------------------
+export const siteRevisions = pgTable(
+  "site_revisions",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    siteId: uuid("site_id").notNull(),
+    // Monotonically increasing per Site, starting at 1 — assigned inside
+    // `createRevisionFromDraft` (packages/publishing) while holding a
+    // `SELECT ... FOR UPDATE` lock on the Site row, so two concurrent
+    // publishes on the same Site can never compute the same number. The
+    // unique index below is the database-level backstop for that
+    // invariant, not the primary mechanism.
+    revisionNumber: integer("revision_number").notNull(),
+    // { site: {...presentation fields}, theme: { themeId, tokens }, pages:
+    // [{ slug, internalName, pageType, seo, content }, ...] } — see
+    // packages/publishing/src/snapshot.ts for the exact shape. Deliberately
+    // one JSONB document, not relational child rows: a Revision is read
+    // whole or not at all, and a document is trivial to copy verbatim from
+    // the live draft tables at publish time (same reasoning as
+    // `pages.content` itself — see ADR 0013).
+    snapshot: jsonb("snapshot").notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("site_revisions_site_number_uidx").on(t.siteId, t.revisionNumber),
+    uniqueIndex("site_revisions_tenant_id_id_uidx").on(t.tenantId, t.id),
+    // The FK target for `sites.published_revision_id` (migration 0010) —
+    // a 3-column UNIQUE constraint a composite foreign key can reference,
+    // proving at the database level that a Site's published Revision
+    // really belongs to that same Site (not just that same tenant).
+    uniqueIndex("site_revisions_tenant_site_id_uidx").on(t.tenantId, t.siteId, t.id),
+    index("site_revisions_tenant_id_idx").on(t.tenantId),
+    // The public runtime's hot path: "the current published revision for
+    // this site" is a single-row lookup by id (via sites.published_revision_id),
+    // but the admin history view lists every revision for a site newest
+    // first — this index serves that query.
+    index("site_revisions_site_id_number_idx").on(t.siteId, t.revisionNumber),
+    foreignKey({
+      columns: [t.tenantId, t.siteId],
+      foreignColumns: [sites.tenantId, sites.id],
+      name: "site_revisions_tenant_site_fk",
+    }).onDelete("cascade"),
+    check("site_revisions_number_positive_ck", sql`${t.revisionNumber} > 0`),
+    pgPolicy("tenant_read_site_revisions", {
+      for: "select",
+      to: appRole,
+      using: tenantMatch,
+    }),
+    pgPolicy("tenant_insert_site_revisions", {
+      for: "insert",
+      to: appRole,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// site_publications — an append-only history of "Revision X became the
+// active one for Site Y" events (v0.4). Deliberately NOT the source of
+// truth for "what's live right now" — that is exclusively
+// `sites.published_revision_id` (see the comment on that column). Reading
+// this table can never tell you the current state faster or more
+// authoritatively than that one column; it exists purely so the admin can
+// show "publication history" and so a rollback's provenance
+// (`previous_revision_id`) is recorded somewhere, avoiding the two-sources-
+// of-truth trap the v0.4 brief warns about.
+// ---------------------------------------------------------------------------
+export const publicationActionValues = ["publish", "rollback"] as const;
+export type PublicationAction = (typeof publicationActionValues)[number];
+
+export const sitePublications = pgTable(
+  "site_publications",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    siteId: uuid("site_id").notNull(),
+    revisionId: uuid("revision_id").notNull(),
+    previousRevisionId: uuid("previous_revision_id"),
+    action: text("action", { enum: publicationActionValues }).notNull(),
+    publishedByUserId: uuid("published_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("site_publications_tenant_id_idx").on(t.tenantId),
+    // The admin history view's query shape: "this site's publications,
+    // newest first."
+    index("site_publications_site_id_created_idx").on(t.siteId, t.createdAt),
+    foreignKey({
+      columns: [t.tenantId, t.siteId],
+      foreignColumns: [sites.tenantId, sites.id],
+      name: "site_publications_tenant_site_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.tenantId, t.revisionId],
+      foreignColumns: [siteRevisions.tenantId, siteRevisions.id],
+      name: "site_publications_tenant_revision_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.tenantId, t.previousRevisionId],
+      foreignColumns: [siteRevisions.tenantId, siteRevisions.id],
+      name: "site_publications_tenant_previous_revision_fk",
+    }).onDelete("set null"),
+    pgPolicy("tenant_read_site_publications", {
+      for: "select",
+      to: appRole,
+      using: tenantMatch,
+    }),
+    pgPolicy("tenant_insert_site_publications", {
+      for: "insert",
+      to: appRole,
       withCheck: tenantMatch,
     }),
   ],

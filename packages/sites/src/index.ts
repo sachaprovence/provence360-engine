@@ -1,4 +1,5 @@
 export {
+  SiteConflictError,
   SiteNotFoundError,
   createSite,
   getSite,

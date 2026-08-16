@@ -26,6 +26,22 @@ export class InvalidReorderError extends Error {
   }
 }
 
+/**
+ * Thrown by a Page mutation when the caller passed `expectedUpdatedAt` (an
+ * optimistic-concurrency token — see packages/publishing/docs/PUBLISHING.md)
+ * and the row's actual `updatedAt` no longer matches: someone else's write
+ * already landed since the caller last read this page. Distinct from
+ * {@link PageNotFoundError} — the page exists, it just isn't the version the
+ * caller thinks it is. A caller that never passes `expectedUpdatedAt` (every
+ * v0.3 call site) can never see this error; the check is opt-in.
+ */
+export class PageConflictError extends Error {
+  constructor(pageId: string) {
+    super(`Page "${pageId}" was modified by someone else since it was last read.`);
+    this.name = "PageConflictError";
+  }
+}
+
 export class MediaAssetNotFoundError extends Error {
   constructor(mediaAssetId: string) {
     super(`MediaAsset "${mediaAssetId}" was not found (or does not belong to the current tenant).`);

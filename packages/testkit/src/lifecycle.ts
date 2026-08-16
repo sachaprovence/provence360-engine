@@ -8,6 +8,8 @@ import {
   memberships,
   pages,
   properties,
+  siteRevisions,
+  sitePublications,
   sites,
   tenants,
   themes,
@@ -78,6 +80,6 @@ export async function resetDatabase(): Promise<void> {
   assertTestEnvironment();
   const db = getAdminDb();
   await db.execute(
-    sql`truncate table ${auditLogs}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
+    sql`truncate table ${auditLogs}, ${sitePublications}, ${siteRevisions}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
   );
 }

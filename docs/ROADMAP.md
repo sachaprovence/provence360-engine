@@ -35,12 +35,28 @@ weakened, no cross-tenant test removed, no existing migration modified):
 - **Composite foreign keys** as a second, database-level ownership layer on top of RLS for every new tenant-scoped table — see [docs/SECURITY.md](SECURITY.md#defense-in-depth).
 - **New permissions** — `property.*`, `unit.*`, `page.*`, `theme.read`/`.update`, `media.*` — integrated into the existing role-based catalog without changing how roles/permissions work.
 
+## What Foundation v0.4 adds
+
+The Publishing & Versioning Kernel — turning every v0.3 Site Editor edit
+from "live immediately" into a staged `Draft → Validation → Immutable
+Revision → Publication → Public Runtime` pipeline, without touching any
+prior guarantee (no RLS policy weakened, no cross-tenant test removed, no
+existing migration modified):
+
+- **`site_revisions`** — an immutable, append-only (RLS: SELECT/INSERT only, no UPDATE/DELETE — same pattern as `audit_logs`) snapshot of a Site's presentation, resolved theme tokens, and every active Page's content, numbered monotonically per Site. See [docs/PUBLISHING.md](PUBLISHING.md), [ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md).
+- **`site_publications` + `sites.published_revision_id`** — a single, unambiguous pointer to "what's live now," plus an append-only publish/rollback history. Never two sources of truth.
+- **`publishSite`/`rollbackSite`** (`packages/publishing`) — transactional, row-locked (serializes concurrent publishes on the same Site), tenant/site-safe by construction (a cross-tenant or cross-site revision id is structurally unpublishable, not merely rejected).
+- **The public runtime (`apps/web`) reads only the published Revision** — never the live draft — via `getPublishedRevision`. A Site with no publication 404s, indistinguishable from an unresolvable hostname.
+- **A gated preview** in `apps/admin` — the current draft, rendered through the exact same renderer the public site uses, behind the full existing session/Membership/permission chain (`release.read`) — no new auth mechanism, no shareable token.
+- **Optimistic concurrency on draft edits** — `packages/content`/`packages/sites`' Page/Site mutation functions accept an opt-in `expectedUpdatedAt`, rejecting a stale write (`PageConflictError`/`SiteConflictError`) instead of silently overwriting a newer one. Every v0.3 call site is unaffected (the parameter is optional).
+- **`release.read`/`release.publish` wired up** — declared in v0.1/v0.2's permission catalog, unused until now. No new permissions were needed.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
 requirements a later phase hasn't settled yet:
 
-- **Draft/Release/Publish.** Every Site Editor edit is live immediately — there is no staging, review, or rollback step. The data model is already designed so adding this is additive (see [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility)), but the pipeline itself doesn't exist yet.
+- **Scheduled/future-dated publishing, a Revision diff view, or per-object (not per-tenant) preview links.** See [docs/PUBLISHING.md#risks--deliberately-out-of-scope](PUBLISHING.md#risks--deliberately-out-of-scope).
 - **The booking engine.** No availability, pricing, or reservation flow — the entire reason this platform exists, and still entirely out of scope.
 - **An AI content generator.** None — content is authored by hand through the Site Editor.
 - **Airbnb/Booking.com integrations.** No channel management, no iCal sync.
@@ -55,7 +71,7 @@ requirements a later phase hasn't settled yet:
 - **No self-service signup, password reset, or email verification.** A user is provisioned by an existing OWNER/ADMIN or the seed script. See [docs/AUTHENTICATION.md](AUTHENTICATION.md).
 - **Login rate limiting is per-email, not per-IP.** No trusted client-IP plumbing exists yet — documented explicitly as a gap in [docs/AUTHENTICATION.md#rate-limiting](AUTHENTICATION.md#rate-limiting) rather than papered over with an untrustworthy header.
 - **Fine-grained, per-resource permissions.** The permission catalog (`packages/auth/src/permissions.ts`) is role-based, not per-object (e.g. no "can edit this one Page but not that one" within a tenant) — true for v0.1's resources and still true for v0.3's.
-- **`Draft`/`Releases`.** Sites have no publish workflow — what's in `pages.content` (and the rest of the Site Domain) is what's live. The request pipeline's future `PublishedRelease` step (see `docs/ARCHITECTURE.md`) is a no-op today; the current pipeline reads live rows directly.
+- **No scheduled publishing or Revision diff view.** `Draft`/`Releases` (v0.4's Publishing & Versioning Kernel) exist now — see [docs/PUBLISHING.md](PUBLISHING.md) — but `publishSite` always publishes immediately, and there's no UI to diff two Revisions' content against each other yet.
 - **Real observability.** `packages/observability`'s logger is structured JSON-lines to stdout; no OTel export, no tracing, no metrics backend, no request-id correlation across service boundaries yet.
 - **Worker jobs.** `apps/worker` is a heartbeat-only process boundary — domain re-verification, release publishing, session cleanup, and any other scheduled work land here once there's something to schedule.
 - **A platform super-admin.** Deliberately undesigned so far — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md) for why it needs its own identity concept rather than an extension of `MembershipRole`.

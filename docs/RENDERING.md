@@ -9,27 +9,29 @@ Luberon," which differ only in data, never in code).
 ## The resolution pipeline
 
 ```
-Host -> DomainResolver -> Site -> Page -> Content -> Domain data -> Theme -> Renderer
+Host -> DomainResolver -> Site -> Published Revision -> Domain data -> Renderer
 ```
 
-Extending [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s v0.1 pipeline
-(`Host -> DomainResolver -> Site -> Tenant -> PublishedRelease -> Renderer`)
-now that a real Renderer and Content Graph exist. Concretely
-(`apps/web/app/page.tsx`):
+Extending [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s pipeline now that a
+real Renderer, Content Graph, and (v0.4) Publishing Kernel exist.
+Concretely (`apps/web/app/page.tsx`):
 
-1. **Host → Site/Tenant** — unchanged from v0.1/v0.2: `resolveSiteByHostname`
+1. **Host → Site/Tenant** — unchanged since v0.1: `resolveSiteByHostname`
    via the narrow `provence360_resolver` role, no tenant context yet.
 2. **Site** — once `tenantId` is known, `withTenantContext(tenantId, ...)`
-   opens an RLS-scoped transaction and the Site row is read through it.
-3. **Page** — `getPageBySlug(tx, site.id, "")` for the home page (see
-   [docs/CONTENT_MODEL.md](CONTENT_MODEL.md) for why HOME uses an empty
-   slug).
-4. **Theme** — `resolveSiteThemeTokens(tx, site)` (see
-   [docs/THEMES.md](THEMES.md)) produces the resolved `ThemeTokens`.
-5. **Content → Domain data → Renderer** — `renderBlocks(page.content,
-context)` walks the page's block array in order, and each domain-bound
-   block loads its own Property/Unit/Amenity/Media data through the same
-   `tx` as it renders (see [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md)).
+   opens an RLS-scoped transaction.
+3. **Published Revision** (v0.4) — `getPublishedRevision(tx, siteId)`
+   (`packages/publishing`) resolves `sites.published_revision_id` and
+   returns its frozen snapshot — the home Page's content and the Site's
+   already-_resolved_ theme tokens — or `null` if the Site has never been
+   published. See [docs/PUBLISHING.md](PUBLISHING.md). The live `pages`
+   table is never read by this pipeline.
+4. **Content → Domain data → Renderer** — `renderBlocks(homePage.content,
+context)` walks the Revision's frozen block array in order, and each
+   domain-bound block still loads its own _live_ Property/Unit/Amenity/
+   Media data through the same `tx` as it renders (see
+   [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md)) — only the content
+   _structure_ is frozen, never the referenced business data.
 
 The Site resolved by hostname is the **only** source of truth for which
 tenant a request belongs to — nothing the browser sends (a cookie, a
@@ -88,15 +90,15 @@ Mas du Luberon homepage (no Gallery/Amenities block) renders in 7. None of
 this is prematurely micro-optimized — it's the natural result of "one
 batched query per data need," not a caching layer.
 
-**Future caching points**, documented rather than built: the resolved
-Site row, the resolved Theme tokens, and — once a Draft/Release pipeline
-exists (see [docs/ROADMAP.md](ROADMAP.md)) — an entire rendered Page are
-all naturally per-Site/per-Release cacheable with targeted invalidation
-(a Site's cache key changes when its Page, Theme, or referenced domain
-data changes). Static/ISR rendering per Site and CDN-level caching of the
-final HTML are both straightforward once a Release concept exists to key
-the cache on, since "live" content (today) has no stable version to cache
-against.
+**Future caching points**, documented rather than built: now that a stable
+Revision id exists to key on (v0.4 — see [docs/PUBLISHING.md](PUBLISHING.md)),
+an entire rendered Page is naturally cacheable per `(siteId,
+revisionId)`, invalidated only by a new publish, never by a draft edit.
+Static/ISR rendering per Site and CDN-level caching of the final HTML are
+both straightforward to add on top of this — the theme tokens and Page
+content are already immutable per Revision; only the domain blocks'
+live Property/Unit/Amenity reads would need their own, shorter-lived
+cache layer if this is ever built.
 
 ## Error handling
 

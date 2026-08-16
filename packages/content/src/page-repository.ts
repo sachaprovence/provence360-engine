@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { AppTx, PageStatus, PageType } from "@provence360/database";
 import { pages, sites } from "@provence360/database";
 import { recordAuditLog } from "@provence360/observability";
@@ -8,11 +8,26 @@ import { generateBlockInstanceId } from "./block-instance";
 import {
   BlockNotFoundError,
   InvalidReorderError,
+  PageConflictError,
   PageNotFoundError,
   SiteNotFoundError,
 } from "./errors";
 import { parseBlockInstance, parsePageContentStrict, type ParsedBlock } from "./parse-block";
 import { seoSchema, type Seo } from "./seo";
+
+// `pages.updated_at` gets its *first* value from Postgres's own `now()`
+// (microsecond precision, via `defaultNow()` in schema.ts's shared
+// `timestamps` helper) but every *subsequent* value from JS's `new Date()`
+// (millisecond precision only, via `$onUpdate`). A caller's
+// `expectedUpdatedAt` is always a JS Date read back from a previous query
+// result, so comparing it against the *first* value with a plain `eq()`
+// would spuriously fail whenever that first value's microseconds happen to
+// be non-zero — not a version mismatch, just two different precisions
+// disagreeing. Truncating both sides to milliseconds in SQL makes the
+// comparison precision-safe regardless of which side the value came from.
+function eqUpdatedAtMs(column: typeof pages.updatedAt, expected: Date): SQL {
+  return sql`date_trunc('milliseconds', ${column}) = date_trunc('milliseconds', ${expected.toISOString()}::timestamptz)`;
+}
 
 export interface CreatePageInput {
   siteId: string;
@@ -79,12 +94,19 @@ export interface UpdatePageMetaInput {
   status?: PageStatus;
   seo?: Seo;
   actorUserId?: string;
+  // Optimistic-concurrency token: the `updatedAt` the caller last observed
+  // for this page. When provided, the write is a compare-and-swap — it only
+  // takes effect if the row's `updatedAt` still matches, so a stale draft
+  // edit can never silently overwrite a newer one (see PageConflictError).
+  // Omitted entirely by every v0.3 call site, which keeps their
+  // unconditional last-write-wins behavior unchanged.
+  expectedUpdatedAt?: Date;
 }
 
 /** Updates a Page's metadata (never its `content` — see `addBlock`/`updateBlockProps`/`removeBlock`/`reorderBlocks`). */
 export async function updatePageMeta(tx: AppTx, input: UpdatePageMetaInput) {
   const tenantId = requireCurrentTenantId();
-  const { id, actorUserId, seo, ...rest } = input;
+  const { id, actorUserId, seo, expectedUpdatedAt, ...rest } = input;
 
   const [row] = await tx
     .update(pages)
@@ -92,9 +114,26 @@ export async function updatePageMeta(tx: AppTx, input: UpdatePageMetaInput) {
       ...rest,
       ...(seo !== undefined ? { seo: seoSchema.parse(seo) } : {}),
     })
-    .where(and(eq(pages.id, id), eq(pages.tenantId, tenantId)))
+    .where(
+      expectedUpdatedAt
+        ? and(
+            eq(pages.id, id),
+            eq(pages.tenantId, tenantId),
+            eqUpdatedAtMs(pages.updatedAt, expectedUpdatedAt),
+          )
+        : and(eq(pages.id, id), eq(pages.tenantId, tenantId)),
+    )
     .returning();
-  if (!row) throw new PageNotFoundError(id);
+  if (!row) {
+    if (expectedUpdatedAt) {
+      const [stillExists] = await tx
+        .select({ id: pages.id })
+        .from(pages)
+        .where(and(eq(pages.id, id), eq(pages.tenantId, tenantId)));
+      if (stillExists) throw new PageConflictError(id);
+    }
+    throw new PageNotFoundError(id);
+  }
 
   await recordAuditLog(tx, {
     ...(actorUserId ? { actorUserId } : {}),
@@ -168,12 +207,42 @@ async function loadPageForMutation(tx: AppTx, pageId: string, tenantId: string) 
   return row;
 }
 
+/**
+ * The one place `pages.content` is actually written by every block
+ * mutation below. When `expectedUpdatedAt` is given, the UPDATE's WHERE
+ * clause makes this a compare-and-swap: if another write already landed
+ * (and bumped `updatedAt`) since the caller read this page, the statement
+ * affects zero rows and this throws {@link PageConflictError} instead of
+ * silently overwriting it — the whole point being that this check has to
+ * live on the actual write statement, not a preceding read, to be race-safe
+ * against a second concurrent request (see docs/PUBLISHING.md#concurrency).
+ */
+async function writePageContent(
+  tx: AppTx,
+  pageId: string,
+  nextContent: unknown[],
+  expectedUpdatedAt?: Date,
+): Promise<void> {
+  const [row] = await tx
+    .update(pages)
+    .set({ content: nextContent })
+    .where(
+      expectedUpdatedAt
+        ? and(eq(pages.id, pageId), eqUpdatedAtMs(pages.updatedAt, expectedUpdatedAt))
+        : eq(pages.id, pageId),
+    )
+    .returning();
+  if (!row && expectedUpdatedAt) throw new PageConflictError(pageId);
+}
+
 export interface AddBlockInput {
   pageId: string;
   type: string;
   version: number;
   props: unknown;
   actorUserId?: string;
+  /** See {@link UpdatePageMetaInput.expectedUpdatedAt}. */
+  expectedUpdatedAt?: Date;
 }
 
 /** Appends a new block instance (a fresh, stable id — section 18) to the end of the page's content. */
@@ -192,7 +261,7 @@ export async function addBlock(tx: AppTx, input: AddBlockInput): Promise<ParsedB
   const nextContent = [...(page.content as unknown[]), instance];
   parsePageContentStrict(nextContent); // re-validate the whole array, defense in depth
 
-  await tx.update(pages).set({ content: nextContent }).where(eq(pages.id, page.id));
+  await writePageContent(tx, page.id, nextContent, input.expectedUpdatedAt);
 
   await recordAuditLog(tx, {
     ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
@@ -210,6 +279,8 @@ export interface UpdateBlockPropsInput {
   blockId: string;
   props: unknown;
   actorUserId?: string;
+  /** See {@link UpdatePageMetaInput.expectedUpdatedAt}. */
+  expectedUpdatedAt?: Date;
 }
 
 /** Replaces one block instance's `props` in place — `id`/`type`/`version` are unchanged. */
@@ -235,7 +306,7 @@ export async function updateBlockProps(
   const nextContent = content.map((b) => (b.id === input.blockId ? updatedInstance : b));
   parsePageContentStrict(nextContent);
 
-  await tx.update(pages).set({ content: nextContent }).where(eq(pages.id, page.id));
+  await writePageContent(tx, page.id, nextContent, input.expectedUpdatedAt);
 
   await recordAuditLog(tx, {
     ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
@@ -252,6 +323,8 @@ export interface RemoveBlockInput {
   pageId: string;
   blockId: string;
   actorUserId?: string;
+  /** See {@link UpdatePageMetaInput.expectedUpdatedAt}. */
+  expectedUpdatedAt?: Date;
 }
 
 export async function removeBlock(tx: AppTx, input: RemoveBlockInput): Promise<void> {
@@ -264,7 +337,7 @@ export async function removeBlock(tx: AppTx, input: RemoveBlockInput): Promise<v
 
   const nextContent = content.filter((b) => b.id !== input.blockId);
 
-  await tx.update(pages).set({ content: nextContent }).where(eq(pages.id, page.id));
+  await writePageContent(tx, page.id, nextContent, input.expectedUpdatedAt);
 
   await recordAuditLog(tx, {
     ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
@@ -279,6 +352,8 @@ export interface ReorderBlocksInput {
   pageId: string;
   orderedBlockIds: readonly string[];
   actorUserId?: string;
+  /** See {@link UpdatePageMetaInput.expectedUpdatedAt}. */
+  expectedUpdatedAt?: Date;
 }
 
 /**
@@ -319,7 +394,7 @@ export async function reorderBlocks(tx: AppTx, input: ReorderBlocksInput): Promi
     return block;
   });
 
-  await tx.update(pages).set({ content: nextContent }).where(eq(pages.id, page.id));
+  await writePageContent(tx, page.id, nextContent, input.expectedUpdatedAt);
 
   await recordAuditLog(tx, {
     ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),

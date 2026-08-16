@@ -156,10 +156,13 @@ into the Release at publish time)?
 - **Already immutable by convention:** `MediaAsset` rows (no `updatedAt` —
   a new version is a new row), `AuditLog` entries.
 
-No Draft → Release → Publish pipeline exists yet in v0.3 — every edit made
-through the admin Site Editor is live immediately. See
-[docs/ROADMAP.md](ROADMAP.md) and the technical-debt section of the v0.3
-completion report for the explicit statement of this gap.
+**v0.4 update:** the Draft → Release → Publish pipeline this section
+anticipated now exists — see [docs/PUBLISHING.md](PUBLISHING.md) and
+[ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md). The
+distinction drawn above (Property/Unit/Amenity referenced live vs. a
+Page's `content` snapshotted) is exactly what `packages/publishing`'s
+Revision snapshot implements, unchanged from this section's original
+design.
 
 ## Twelve invariants
 
