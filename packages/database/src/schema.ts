@@ -349,17 +349,25 @@ export const sites = pgTable(
     features: jsonb("features").notNull().default({}),
     // v0.4 — the single source of truth for "what's currently live on the
     // public site" (see docs/PUBLISHING.md and ADR 0016). Nullable: a
-    // brand-new site has never been published. Deliberately a plain
-    // single-column FK (not the composite (tenant_id, id) pattern used
-    // elsewhere) — `site_revisions` is declared further down this file and
-    // referencing it compositely from here would need a forward reference
-    // Drizzle can't resolve at table-definition time. The cross-tenant
-    // guarantee still holds in practice: `publishSite`/`rollbackSite`
-    // (packages/publishing) only ever write an id they just read back
-    // through this same tenant's RLS-scoped transaction, so a
-    // different-tenant revision id is structurally unreadable, not merely
-    // unwritable — the same "two independent layers" reasoning used
-    // throughout this file (see e.g. `createSite`'s docstring).
+    // brand-new site has never been published.
+    //
+    // Declared here as a plain column, not `.references(...)` — `site_revisions`
+    // is declared further down this file, and Drizzle's table-config
+    // `foreignKey()` helper needs its target's columns to already be
+    // initialized bindings at the point it runs, which a forward reference
+    // from here can't satisfy (temporal dead zone). The REAL constraint
+    // still exists at the database level: migration 0010
+    // (`0010_sites_published_revision_composite_fk.sql`) hand-adds
+    // `FOREIGN KEY (tenant_id, id, published_revision_id) REFERENCES
+    // site_revisions (tenant_id, site_id, id) ON DELETE RESTRICT` via raw
+    // SQL, since Drizzle's schema DSL can't express this composite FK
+    // (same forward-reference limitation) — see ADR 0016's "Decision 1"
+    // update. That constraint is what makes "this Site's published
+    // Revision belongs to a different tenant" or "...to a different Site
+    // in the same tenant" a `23503` Postgres error, not merely something
+    // application code and RLS happen to also prevent. This column and
+    // that migration must be read together; this comment is not a
+    // substitute for reading migration 0010.
     publishedRevisionId: uuid("published_revision_id"),
     ...timestamps,
   },
@@ -789,6 +797,11 @@ export const siteRevisions = pgTable(
   (t) => [
     uniqueIndex("site_revisions_site_number_uidx").on(t.siteId, t.revisionNumber),
     uniqueIndex("site_revisions_tenant_id_id_uidx").on(t.tenantId, t.id),
+    // The FK target for `sites.published_revision_id` (migration 0010) —
+    // a 3-column UNIQUE constraint a composite foreign key can reference,
+    // proving at the database level that a Site's published Revision
+    // really belongs to that same Site (not just that same tenant).
+    uniqueIndex("site_revisions_tenant_site_id_uidx").on(t.tenantId, t.siteId, t.id),
     index("site_revisions_tenant_id_idx").on(t.tenantId),
     // The public runtime's hot path: "the current published revision for
     // this site" is a single-row lookup by id (via sites.published_revision_id),

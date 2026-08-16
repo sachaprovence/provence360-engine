@@ -52,11 +52,21 @@ its own:
 id)` index, not just a plain `parent_id` FK. A row whose `tenant_id`
    doesn't match its parent's owner is rejected by Postgres at
    `INSERT`/`UPDATE` time (`23503`) — before RLS's `WITH CHECK` is even
-   evaluated. `sites.published_revision_id` is the one documented
-   exception — see [ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md)
-   for why, and how the same guarantee is instead enforced by
-   `packages/publishing`'s own tenant-scoped re-read + explicit `siteId`
-   check. See also
+   evaluated. `sites.published_revision_id → site_revisions` is the one
+   case that couldn't be declared as a normal `foreignKey()` in
+   `schema.ts` (a Drizzle DSL forward-reference limitation, not a
+   PostgreSQL one — `site_revisions` is declared later in the file than
+   `sites`) — it's instead a hand-written composite FK in migration 0010,
+   `FOREIGN KEY (tenant_id, id, published_revision_id) REFERENCES
+site_revisions (tenant_id, site_id, id) ON DELETE RESTRICT`, backed by
+   a new `UNIQUE (tenant_id, site_id, id)` on `site_revisions` (migration
+   0009). Same guarantee, same enforcement point (Postgres, `23503`,
+   every role including the admin connection) — just expressed as raw SQL
+   instead of the schema DSL. See
+   [ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md) for the
+   full reasoning and
+   `packages/publishing/src/db-constraints.test.ts` for the tests. See
+   also
    [docs/SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls](SITE_DOMAIN.md#ownership-consistency-db-constraints-not-only-rls)
    and [ADR 0010](adr/0010-property-unit-ownership.md).
 5. **Explicit tests** — `packages/tenant`, `packages/domains`,

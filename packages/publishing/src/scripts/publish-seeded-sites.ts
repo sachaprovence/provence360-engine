@@ -27,7 +27,10 @@ async function main(): Promise<void> {
     .from(sites);
 
   for (const row of rows) {
-    // eslint-disable-next-line no-await-in-loop -- publishing N seeded sites serially is simpler to reason about than fanning out, and N is always small (a handful of demo sites).
+    // Serial on purpose (no-await-in-loop isn't enabled in this repo's
+    // eslint config anyway): publishing N seeded sites one at a time is
+    // simpler to reason about than fanning out, and N is always small (a
+    // handful of demo sites).
     await withTenantContext(row.tenantId, (tx) => publishSite(tx, { siteId: row.id }));
     console.log(`  published ${row.slug} (${row.id})`);
   }

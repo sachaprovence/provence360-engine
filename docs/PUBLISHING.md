@@ -117,20 +117,31 @@ own.
 
 ### Cross-tenant / cross-site safety
 
-`publishRevision` re-reads `revisionId` through the _current tenant's_
-RLS-scoped `tx` before ever writing it into `published_revision_id` — a
-different tenant's Revision id simply does not exist from that query's
-point of view (RLS denies the row), so it is structurally unreadable, not
-merely rejected after the fact. A second, independent check
-(`revision.siteId === siteId`) catches the narrower case RLS alone can't:
-a Revision belonging to a _different Site in the same tenant_.
-`sites.published_revision_id` is a plain single-column FK to
-`site_revisions.id` (not the composite `(tenant_id, id)` pattern used
-elsewhere — `site_revisions` is declared later in `schema.ts`, and a
-forward composite reference there hits Drizzle's declaration-order
-limits); the tenant/site guarantee is enforced by the two checks above,
-the same "two independent layers" reasoning already used throughout this
-schema (e.g. `createSite`'s docstring).
+Three independent layers, any one of which alone would stop a wrong
+Revision from ever being published onto the wrong Site:
+
+1. **Application** — `publishRevision` re-reads `revisionId` through the
+   _current tenant's_ RLS-scoped `tx` before ever writing it into
+   `published_revision_id` — a different tenant's Revision id simply does
+   not exist from that query's point of view (RLS denies the row).
+2. **Application** — an explicit `revision.siteId === siteId` check
+   catches the narrower case RLS alone can't: a Revision belonging to a
+   _different Site in the same tenant_.
+3. **Database** — `sites.published_revision_id` is backed by a composite
+   foreign key (migration 0010:
+   `FOREIGN KEY (tenant_id, id, published_revision_id) REFERENCES
+site_revisions (tenant_id, site_id, id) ON DELETE RESTRICT`) against a
+   new `UNIQUE (tenant_id, site_id, id)` constraint on `site_revisions`
+   (migration 0009). Whenever `published_revision_id` is set, Postgres
+   itself requires a matching `site_revisions` row on tenant _and_ site —
+   a `23503` error, enforced for every role including the admin
+   connection, independent of whether layers 1–2 were ever reached. See
+   [ADR 0016](adr/0016-publishing-pointer-and-snapshot-model.md#decision-1--the-active-revision-pointer)
+   for why this couldn't be declared directly in `schema.ts` (a Drizzle
+   DSL limitation, not a PostgreSQL one) and
+   `packages/publishing/src/db-constraints.test.ts` for the tests proving
+   it — including proving RLS alone would _not_ have caught these cases,
+   so the FK is doing necessary work, not redundant work.
 
 ## Draft concurrency (optimistic, opt-in)
 

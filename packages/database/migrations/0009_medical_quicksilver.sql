@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "site_revisions_tenant_site_id_uidx" ON "site_revisions" USING btree ("tenant_id","site_id","id");

@@ -1,6 +1,6 @@
 {
-  "id": "6fdcd1fe-167f-465c-81c8-29a1a371a5da",
-  "prevId": "e10ffdb1-8e04-4985-a79d-f0e51895356f",
+  "id": "0b183c05-f632-4917-8e8f-0909bae99013",
+  "prevId": "2521437e-2a0b-4558-bd61-811c049eebe8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1520,6 +1520,33 @@
           "columns": [
             {
               "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "site_revisions_tenant_site_id_uidx": {
+          "name": "site_revisions_tenant_site_id_uidx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "site_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
