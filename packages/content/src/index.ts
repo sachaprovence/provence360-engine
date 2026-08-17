@@ -4,6 +4,23 @@ export type { LocalizedString } from "./localized-string";
 export { seoSchema } from "./seo";
 export type { Seo } from "./seo";
 
+export {
+  EMPTY_NAVIGATION,
+  NAVIGATION_SCHEMA_VERSION,
+  navigationExternalTargetSchema,
+  navigationInternalTargetSchema,
+  navigationSchema,
+  navigationTargetSchema,
+  parseDraftNavigation,
+} from "./navigation";
+export type {
+  Navigation,
+  NavigationExternalTarget,
+  NavigationInternalTarget,
+  NavigationItem,
+  NavigationTarget,
+} from "./navigation";
+
 export { blockEnvelopeSchema, generateBlockInstanceId } from "./block-instance";
 export type { BlockEnvelope } from "./block-instance";
 
@@ -15,9 +32,9 @@ export {
   blockRegistry,
   registerBlock,
 } from "./block-registry";
-export type { BlockDefinition } from "./block-registry";
+export type { BlockDefinition, BlockReference } from "./block-registry";
 
-export { parseBlockInstance, parsePageContentStrict } from "./parse-block";
+export { extractBlockReferences, parseBlockInstance, parsePageContentStrict } from "./parse-block";
 export type { ParsedBlock } from "./parse-block";
 
 // Importing this barrel registers every built-in block as a side effect —

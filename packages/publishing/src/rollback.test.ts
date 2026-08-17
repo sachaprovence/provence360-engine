@@ -7,6 +7,7 @@ import {
   resetDatabase,
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
+import { updateSiteNavigation } from "@provence360/sites";
 import { publishSite } from "./publish";
 import { getPublishedRevision } from "./published-revision";
 import { RevisionNotFoundError } from "./errors";
@@ -121,5 +122,45 @@ describe("rollbackSite", () => {
         rollbackSite(tx, { siteId: siteA.id, targetRevisionId: publicationC.revisionId }),
       ),
     ).rejects.toThrow(RevisionNotFoundError);
+  });
+
+  it("restores the entire frozen composition (not just page content) — navigation reverts too", async () => {
+    const tenant = await createTenant();
+    const site = await seedPublishableSite(tenant.id, "v1");
+    const home = await withTenantContext(tenant.id, (tx) => getPageBySlug(tx, site.id, ""));
+    if (!home) throw new Error("test setup: home page not found");
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteNavigation(tx, {
+        id: site.id,
+        navigation: {
+          version: 1,
+          items: [{ id: "n1", label: { fr: "V1 nav" }, target: { kind: "page", pageId: home.id } }],
+        },
+      }),
+    );
+    const v1 = await withTenantContext(tenant.id, (tx) => publishSite(tx, { siteId: site.id }));
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteNavigation(tx, { id: site.id, navigation: { version: 1, items: [] } }),
+    );
+    await withTenantContext(tenant.id, (tx) => publishSite(tx, { siteId: site.id }));
+    const beforeRollback = await withTenantContext(tenant.id, (tx) =>
+      getPublishedRevision(tx, site.id),
+    );
+    expect(beforeRollback?.snapshot.site.navigation.items).toHaveLength(0);
+
+    await withTenantContext(tenant.id, (tx) =>
+      rollbackSite(tx, { siteId: site.id, targetRevisionId: v1.revisionId }),
+    );
+
+    const afterRollback = await withTenantContext(tenant.id, (tx) =>
+      getPublishedRevision(tx, site.id),
+    );
+    expect(afterRollback?.snapshot.site.navigation.items).toHaveLength(1);
+    expect(afterRollback?.snapshot.site.navigation.items[0]?.target).toEqual({
+      kind: "page",
+      slug: "",
+    });
   });
 });

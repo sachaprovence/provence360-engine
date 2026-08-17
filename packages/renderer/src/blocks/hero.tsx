@@ -1,7 +1,7 @@
 import type { HeroProps } from "@provence360/content";
 import { resolveLocalizedString } from "@provence360/content";
-import { listMediaAssetsByIds } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
+import { resolveMediaDescriptor } from "../resolve-media";
 
 export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, context }) => {
   const t = context.tokens;
@@ -13,9 +13,14 @@ export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, cont
     ? resolveLocalizedString(props.ctaLabel, context.locale, context.defaultLocale)
     : undefined;
 
-  const [background] = props.backgroundMediaId
-    ? await listMediaAssetsByIds(context.tx, [props.backgroundMediaId])
-    : [];
+  // Published rendering resolves from the Revision's own frozen manifest;
+  // Draft preview falls back to a live, tenant-scoped lookup — see
+  // `resolve-media.ts` and `RenderContext.media`'s own doc comment. Either
+  // way, a stale/cross-tenant/absent id simply resolves to nothing — the
+  // background falls back to a plain color, never an error.
+  const background = props.backgroundMediaId
+    ? await resolveMediaDescriptor(props.backgroundMediaId, context)
+    : null;
 
   return (
     <section

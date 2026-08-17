@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hash as argon2Hash } from "@node-rs/argon2";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { closeAdminPool, getAdminDb } from "../admin/index";
 import { loadDotEnv } from "../load-env";
 import {
@@ -462,190 +462,262 @@ async function main(): Promise<void> {
   // Two deliberately different block compositions and orders, rendered by
   // the exact same `packages/renderer` code and block registry — no
   // per-client component anywhere (section 8 of docs/RENDERING.md).
-  await db.insert(pages).values([
-    {
-      tenantId: provenceSud.id,
-      siteId: villasCassis.id,
-      slug: "",
-      internalName: "Accueil — Villa des Oliviers",
-      status: "active",
-      pageType: "home",
-      seo: {
-        title: {
-          fr: "Villa des Oliviers — Location à Cassis",
-          en: "Villa des Oliviers — Cassis rental",
+  const [villasCassisHomePage, masDuLuberonHomePage] = await db
+    .insert(pages)
+    .values([
+      {
+        tenantId: provenceSud.id,
+        siteId: villasCassis.id,
+        slug: "",
+        internalName: "Accueil — Villa des Oliviers",
+        status: "active",
+        pageType: "home",
+        seo: {
+          title: {
+            fr: "Villa des Oliviers — Location à Cassis",
+            en: "Villa des Oliviers — Cassis rental",
+          },
+          description: {
+            fr: "Villa avec piscine chauffée à louer à Cassis, en Provence.",
+            en: "Villa with a heated pool to rent in Cassis, Provence.",
+          },
+          canonicalPath: "/",
+          noIndex: false,
+          noFollow: false,
         },
-        description: {
-          fr: "Villa avec piscine chauffée à louer à Cassis, en Provence.",
-          en: "Villa with a heated pool to rent in Cassis, Provence.",
-        },
-        canonicalPath: "/",
-        noIndex: false,
-        noFollow: false,
+        content: [
+          {
+            id: blockId(),
+            type: "hero",
+            version: 1,
+            props: {
+              headline: {
+                fr: "Villa des Oliviers — Cassis, Provence",
+                en: "Villa des Oliviers — Cassis, Provence",
+              },
+              subheadline: {
+                fr: "Piscine chauffée, jardin ombragé et vue sur les calanques.",
+                en: "Heated pool, shaded garden, and views over the calanques.",
+              },
+              backgroundMediaId: villaHeroImage.id,
+              ctaLabel: { fr: "Réserver", en: "Book now" },
+              ctaHref: "/contact",
+            },
+          },
+          {
+            id: blockId(),
+            type: "text",
+            version: 1,
+            props: {
+              heading: { fr: "Bienvenue", en: "Welcome" },
+              body: {
+                fr: "Nichée au cœur de Cassis, la Villa des Oliviers vous accueille dans un cadre provençal authentique.\nÀ deux pas des calanques et du port, elle allie calme et proximité des commerces.",
+                en: "Tucked in the heart of Cassis, Villa des Oliviers welcomes you in an authentic Provençal setting.\nMinutes from the calanques and the harbor, it combines quiet with easy access to shops.",
+              },
+            },
+          },
+          {
+            id: blockId(),
+            type: "gallery",
+            version: 1,
+            props: {
+              mediaAssetIds: [villaHeroImage.id, villaGalleryImage1.id, villaGalleryImage2.id],
+              caption: { fr: "La villa et ses extérieurs", en: "The villa and its grounds" },
+            },
+          },
+          {
+            id: blockId(),
+            type: "feature-list",
+            version: 1,
+            props: {
+              heading: { fr: "Équipements phares", en: "Highlights" },
+              items: [
+                { iconKey: "pool", title: { fr: "Piscine chauffée", en: "Heated pool" } },
+                { iconKey: "garden", title: { fr: "Jardin ombragé", en: "Shaded garden" } },
+                { iconKey: "bbq", title: { fr: "Espace barbecue", en: "BBQ area" } },
+              ],
+            },
+          },
+          {
+            id: blockId(),
+            type: "property-summary",
+            version: 1,
+            props: { propertyId: villaDesOliviers.id, showDescription: true, showAddress: true },
+          },
+          {
+            id: blockId(),
+            type: "unit-grid",
+            version: 1,
+            props: { propertyId: villaDesOliviers.id, columns: 2 },
+          },
+          {
+            id: blockId(),
+            type: "amenities",
+            version: 1,
+            props: { unitId: villaPrincipale.id, heading: { fr: "Tout confort", en: "Comforts" } },
+          },
+          {
+            id: blockId(),
+            type: "cta",
+            version: 1,
+            props: {
+              heading: {
+                fr: "Prêt pour vos vacances en Provence ?",
+                en: "Ready for your Provence getaway?",
+              },
+              buttonLabel: { fr: "Contactez-nous", en: "Contact us" },
+              buttonHref: "/contact",
+            },
+          },
+        ],
       },
-      content: [
-        {
-          id: blockId(),
-          type: "hero",
-          version: 1,
-          props: {
-            headline: {
-              fr: "Villa des Oliviers — Cassis, Provence",
-              en: "Villa des Oliviers — Cassis, Provence",
+      {
+        tenantId: luberonRetreats.id,
+        siteId: masDuLuberon.id,
+        slug: "",
+        internalName: "Accueil — Mas du Luberon",
+        status: "active",
+        pageType: "home",
+        seo: {
+          title: { fr: "Mas du Luberon — Location à Bonnieux" },
+          description: { fr: "Mas provençal en pierre à louer au cœur du Luberon." },
+          canonicalPath: "/",
+          noIndex: false,
+          noFollow: false,
+        },
+        // Deliberately a different order than Villas Cassis (FeatureList
+        // before the PropertySummary, no Gallery/Amenities block at all) —
+        // configurable per Page, not hard-coded in the renderer.
+        content: [
+          {
+            id: blockId(),
+            type: "hero",
+            version: 1,
+            props: {
+              headline: { fr: "Mas du Luberon — refuge au cœur des collines" },
+              subheadline: { fr: "Vue imprenable sur le Luberon, calme absolu." },
+              backgroundMediaId: masHeroImage.id,
+              ctaLabel: { fr: "Réserver" },
+              ctaHref: "/contact",
             },
-            subheadline: {
-              fr: "Piscine chauffée, jardin ombragé et vue sur les calanques.",
-              en: "Heated pool, shaded garden, and views over the calanques.",
-            },
-            backgroundMediaId: villaHeroImage.id,
-            ctaLabel: { fr: "Réserver", en: "Book now" },
-            ctaHref: "/contact",
           },
-        },
-        {
-          id: blockId(),
-          type: "text",
-          version: 1,
-          props: {
-            heading: { fr: "Bienvenue", en: "Welcome" },
-            body: {
-              fr: "Nichée au cœur de Cassis, la Villa des Oliviers vous accueille dans un cadre provençal authentique.\nÀ deux pas des calanques et du port, elle allie calme et proximité des commerces.",
-              en: "Tucked in the heart of Cassis, Villa des Oliviers welcomes you in an authentic Provençal setting.\nMinutes from the calanques and the harbor, it combines quiet with easy access to shops.",
+          {
+            id: blockId(),
+            type: "feature-list",
+            version: 1,
+            props: {
+              heading: { fr: "Pourquoi ce mas" },
+              items: [
+                { iconKey: "mountain_view", title: { fr: "Vue sur le Luberon" } },
+                { iconKey: "fireplace", title: { fr: "Cheminée en pierre" } },
+              ],
             },
           },
-        },
-        {
-          id: blockId(),
-          type: "gallery",
-          version: 1,
-          props: {
-            mediaAssetIds: [villaHeroImage.id, villaGalleryImage1.id, villaGalleryImage2.id],
-            caption: { fr: "La villa et ses extérieurs", en: "The villa and its grounds" },
-          },
-        },
-        {
-          id: blockId(),
-          type: "feature-list",
-          version: 1,
-          props: {
-            heading: { fr: "Équipements phares", en: "Highlights" },
-            items: [
-              { iconKey: "pool", title: { fr: "Piscine chauffée", en: "Heated pool" } },
-              { iconKey: "garden", title: { fr: "Jardin ombragé", en: "Shaded garden" } },
-              { iconKey: "bbq", title: { fr: "Espace barbecue", en: "BBQ area" } },
-            ],
-          },
-        },
-        {
-          id: blockId(),
-          type: "property-summary",
-          version: 1,
-          props: { propertyId: villaDesOliviers.id, showDescription: true, showAddress: true },
-        },
-        {
-          id: blockId(),
-          type: "unit-grid",
-          version: 1,
-          props: { propertyId: villaDesOliviers.id, columns: 2 },
-        },
-        {
-          id: blockId(),
-          type: "amenities",
-          version: 1,
-          props: { unitId: villaPrincipale.id, heading: { fr: "Tout confort", en: "Comforts" } },
-        },
-        {
-          id: blockId(),
-          type: "cta",
-          version: 1,
-          props: {
-            heading: {
-              fr: "Prêt pour vos vacances en Provence ?",
-              en: "Ready for your Provence getaway?",
+          {
+            id: blockId(),
+            type: "property-summary",
+            version: 1,
+            props: {
+              propertyId: masDuLuberonProperty.id,
+              showDescription: true,
+              showAddress: true,
             },
-            buttonLabel: { fr: "Contactez-nous", en: "Contact us" },
-            buttonHref: "/contact",
           },
-        },
-      ],
-    },
-    {
-      tenantId: luberonRetreats.id,
-      siteId: masDuLuberon.id,
-      slug: "",
-      internalName: "Accueil — Mas du Luberon",
-      status: "active",
-      pageType: "home",
-      seo: {
-        title: { fr: "Mas du Luberon — Location à Bonnieux" },
-        description: { fr: "Mas provençal en pierre à louer au cœur du Luberon." },
-        canonicalPath: "/",
-        noIndex: false,
-        noFollow: false,
+          {
+            id: blockId(),
+            type: "text",
+            version: 1,
+            props: {
+              heading: { fr: "Le mas" },
+              body: {
+                fr: "Un mas provençal restauré avec soin, posé au calme au cœur des collines du Luberon.\nIdéal pour un séjour au vert, loin de l'agitation.",
+              },
+            },
+          },
+          {
+            id: blockId(),
+            type: "unit-grid",
+            version: 1,
+            props: { propertyId: masDuLuberonProperty.id, columns: 1 },
+          },
+          {
+            id: blockId(),
+            type: "cta",
+            version: 1,
+            props: {
+              buttonLabel: { fr: "Nous contacter" },
+              buttonHref: "/contact",
+            },
+          },
+        ],
       },
-      // Deliberately a different order than Villas Cassis (FeatureList
-      // before the PropertySummary, no Gallery/Amenities block at all) —
-      // configurable per Page, not hard-coded in the renderer.
-      content: [
-        {
-          id: blockId(),
-          type: "hero",
-          version: 1,
-          props: {
-            headline: { fr: "Mas du Luberon — refuge au cœur des collines" },
-            subheadline: { fr: "Vue imprenable sur le Luberon, calme absolu." },
-            backgroundMediaId: masHeroImage.id,
-            ctaLabel: { fr: "Réserver" },
-            ctaHref: "/contact",
-          },
+    ])
+    .returning();
+  if (!villasCassisHomePage || !masDuLuberonHomePage) throw new Error("Failed to seed home pages");
+
+  console.log("Seeding a Contact page + Draft navigation for Villas Cassis...");
+  // v0.5: demonstrates the typed Site Composition navigation contract
+  // end-to-end — internal links reference a Page by its stable `id`
+  // (`packages/content/src/navigation.ts`'s `NavigationItem`), resolved to
+  // a real route only at publish time (`packages/publishing`'s
+  // `resolveNavigation`). Mas du Luberon deliberately keeps the column's
+  // pre-v0.5 default (`[]`, no navigation configured) — exercising the
+  // "empty navigation renders nothing" path alongside this one.
+  const [villasCassisContactPage] = await db
+    .insert(pages)
+    .values([
+      {
+        tenantId: provenceSud.id,
+        siteId: villasCassis.id,
+        slug: "contact",
+        internalName: "Contact — Villa des Oliviers",
+        status: "active",
+        pageType: "contact",
+        seo: {
+          title: { fr: "Contact — Villa des Oliviers", en: "Contact — Villa des Oliviers" },
+          canonicalPath: "/contact",
         },
-        {
-          id: blockId(),
-          type: "feature-list",
-          version: 1,
-          props: {
-            heading: { fr: "Pourquoi ce mas" },
-            items: [
-              { iconKey: "mountain_view", title: { fr: "Vue sur le Luberon" } },
-              { iconKey: "fireplace", title: { fr: "Cheminée en pierre" } },
-            ],
-          },
-        },
-        {
-          id: blockId(),
-          type: "property-summary",
-          version: 1,
-          props: { propertyId: masDuLuberonProperty.id, showDescription: true, showAddress: true },
-        },
-        {
-          id: blockId(),
-          type: "text",
-          version: 1,
-          props: {
-            heading: { fr: "Le mas" },
-            body: {
-              fr: "Un mas provençal restauré avec soin, posé au calme au cœur des collines du Luberon.\nIdéal pour un séjour au vert, loin de l'agitation.",
+        content: [
+          {
+            id: blockId(),
+            type: "text",
+            version: 1,
+            props: {
+              heading: { fr: "Nous contacter", en: "Contact us" },
+              body: {
+                fr: "Pour toute question ou demande de réservation, écrivez-nous à contact@villa-des-oliviers.test.",
+                en: "For any question or booking request, email us at contact@villa-des-oliviers.test.",
+              },
             },
           },
-        },
-        {
-          id: blockId(),
-          type: "unit-grid",
-          version: 1,
-          props: { propertyId: masDuLuberonProperty.id, columns: 1 },
-        },
-        {
-          id: blockId(),
-          type: "cta",
-          version: 1,
-          props: {
-            buttonLabel: { fr: "Nous contacter" },
-            buttonHref: "/contact",
+        ],
+      },
+    ])
+    .returning();
+  if (!villasCassisContactPage) throw new Error("Failed to seed the Contact page");
+
+  await db
+    .update(sites)
+    .set({
+      navigation: {
+        version: 1,
+        items: [
+          {
+            id: "nav_home",
+            label: { fr: "Accueil", en: "Home" },
+            target: { kind: "page", pageId: villasCassisHomePage.id },
+            children: [],
           },
-        },
-      ],
-    },
-  ]);
+          {
+            id: "nav_contact",
+            label: { fr: "Contact", en: "Contact" },
+            target: { kind: "page", pageId: villasCassisContactPage.id },
+            children: [],
+          },
+        ],
+      },
+    })
+    .where(eq(sites.id, villasCassis.id));
 
   console.log("Seeding an audit log entry per tenant...");
   await db.insert(auditLogs).values([

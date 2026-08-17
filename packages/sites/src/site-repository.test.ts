@@ -13,6 +13,7 @@ import {
   createSite,
   getSiteBySlug,
   listSites,
+  updateSiteNavigation,
   updateSiteSettings,
   updateSiteTheme,
 } from "./site-repository";
@@ -249,5 +250,115 @@ describe("updateSiteTheme", () => {
         updateSiteTheme(tx, { id: siteB.id, themeId: theme.id }),
       ),
     ).rejects.toThrow(SiteNotFoundError);
+  });
+});
+
+describe("updateSiteNavigation (structural validation only — see packages/publishing for referential validation)", () => {
+  it("accepts and stores a well-formed navigation", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    const pageId = "01a00000-0000-7000-8000-000000000001";
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteNavigation(tx, {
+        id: site.id,
+        navigation: {
+          version: 1,
+          items: [{ id: "n1", label: { fr: "Accueil" }, target: { kind: "page", pageId } }],
+        },
+      }),
+    );
+
+    expect((updated.navigation as { items: unknown[] }).items).toHaveLength(1);
+  });
+
+  it("rejects a malformed navigation before it ever reaches the database (structural validation, not referential)", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteNavigation(tx, {
+          id: site.id,
+          navigation: { version: 1, items: [{ id: "n1", label: {}, target: { kind: "bogus" } }] },
+        }),
+      ),
+    ).rejects.toThrow();
+
+    // The row is untouched — a rejected structural validation never partially writes.
+    const [reloaded] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, site.id)),
+    );
+    expect(reloaded?.navigation).toEqual([]);
+  });
+
+  it("accepts a navigation referencing a pageId that doesn't (yet) exist — that's a referential check, deferred to publish time", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    const nonExistentPageId = "01a00000-0000-7000-8000-00000000dead";
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteNavigation(tx, {
+        id: site.id,
+        navigation: {
+          version: 1,
+          items: [
+            {
+              id: "n1",
+              label: { fr: "Nowhere yet" },
+              target: { kind: "page", pageId: nonExistentPageId },
+            },
+          ],
+        },
+      }),
+    );
+    expect((updated.navigation as { items: unknown[] }).items).toHaveLength(1);
+  });
+
+  it("refuses to change another tenant's site navigation", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteB = await withTenantContext(tenantB.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    await expect(
+      withTenantContext(tenantA.id, (tx) =>
+        updateSiteNavigation(tx, { id: siteB.id, navigation: { version: 1, items: [] } }),
+      ),
+    ).rejects.toThrow(SiteNotFoundError);
+  });
+
+  it("with a stale expectedUpdatedAt throws SiteConflictError and leaves the row unchanged", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    const staleUpdatedAt = site.updatedAt;
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteNavigation(tx, { id: site.id, navigation: { version: 1, items: [] } }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteNavigation(tx, {
+          id: site.id,
+          navigation: {
+            version: 1,
+            items: [
+              { id: "stale", label: { fr: "Stale" }, target: { kind: "external", href: "/x" } },
+            ],
+          },
+          expectedUpdatedAt: staleUpdatedAt,
+        }),
+      ),
+    ).rejects.toThrow(SiteConflictError);
   });
 });

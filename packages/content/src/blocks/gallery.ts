@@ -19,4 +19,5 @@ export const galleryBlockV1: BlockDefinition<GalleryProps> = {
   version: 1,
   schema: galleryPropsSchema,
   capabilities: { domainBound: false },
+  references: (props) => props.mediaAssetIds.map((id) => ({ kind: "media" as const, id })),
 };

@@ -64,15 +64,23 @@ graph acyclic.
 ## The request pipeline
 
 ```
-Host -> DomainResolver -> Site -> Published Revision -> Domain data -> Renderer
+Host -> DomainResolver -> Site -> Published Revision -> requested Page -> Domain data -> Renderer
 ```
 
-1. **Host** — the incoming request's `Host` header, read in `apps/web/app/page.tsx` via `next/headers`.
+1. **Host** — the incoming request's `Host` header, read in `apps/web/app/[[...slug]]/page.tsx` via `next/headers`.
 2. **DomainResolver** (`packages/domains/src/resolver.ts`) — normalizes the hostname and looks it up against `domains`, joined to `sites`, using the narrow `provence360_resolver` Postgres role (no tenant known yet, so this can't go through `withTenantContext`). Returns `{ siteId, tenantId, siteStatus }` or `null`.
 3. **Site** — once `tenantId` is known, everything else goes through `withTenantContext(tenantId, ...)` (`packages/tenant`), which opens an RLS-scoped transaction.
-4. **Published Revision** (v0.4 — `packages/publishing`'s `getPublishedRevision`) — resolves `sites.published_revision_id` and returns its immutable snapshot (Pages' content, resolved theme tokens) or `null` if the Site has never been published. This is the **only** thing that changed from v0.3: step 4 used to read the Page's live row directly; it now reads a frozen Revision instead — the live `pages` table is never touched by this pipeline at all. See [docs/PUBLISHING.md](PUBLISHING.md).
-5. **Content → Domain data** — `packages/renderer`'s `renderBlocks()` walks the Revision's frozen block array; each domain-bound block (PropertySummary, UnitGrid, Amenities) still loads its own real data from `packages/rentals` through the same tenant-scoped transaction, live — Property/Unit/Amenity data is deliberately never frozen into a Revision (see [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility)). See [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md).
-6. **Renderer** — the same `renderBlocks()`/block-component code for every Site, driven entirely by the Revision's already-resolved theme tokens and content. See [docs/RENDERING.md](RENDERING.md) for the full contract, including the measured query count on a seeded page.
+4. **Published Revision** (v0.4 — `packages/publishing`'s `getPublishedRevision`) — resolves `sites.published_revision_id` and returns its immutable, runtime-parsed snapshot (`parseSiteSnapshot` — v0.5, see [docs/PUBLISHING.md](PUBLISHING.md)) or `null` if the Site has never been published or the snapshot fails to parse. This is the thing that changed from v0.3: this step used to read the Page's live row directly; it now reads a frozen Revision instead — the live `pages` table is never touched by this pipeline at all.
+5. **requested Page** (v0.5) — the URL's slug (any published Page, not only home — `app/[[...slug]]/page.tsx` is an optional catch-all) is looked up inside the Revision's own `pages` array.
+6. **Content → Domain data** — `packages/renderer`'s `renderBlocks()` walks the Revision's frozen block array; each domain-bound block (PropertySummary, UnitGrid, Amenities) still loads its own real data from `packages/rentals` through the same tenant-scoped transaction, live — Property/Unit/Amenity data is deliberately never frozen into a Revision (see [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility)). Media-referencing blocks (Hero/Gallery) instead resolve from the Revision's own frozen media manifest (v0.5). See [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md).
+7. **Renderer** — the same `renderBlocks()`/block-component code for every Site, driven entirely by the Revision's already-resolved theme tokens, content, and (v0.5) resolved navigation/media. See [docs/RENDERING.md](RENDERING.md) for the full contract, including the measured query count on a seeded page.
+
+`packages/publishing` itself sits "above" `content`/`sites`/`themes`/
+`rentals`/`renderer` in the dependency graph below (it depends on all of
+them; none of them depend on it) — consumed only by `apps/web`, `apps/admin`,
+and `packages/testkit`'s own test fixtures, so it is deliberately not one
+of the boxes in the diagram, the same way it isn't a "layer" any other
+package imports.
 
 The immutable `PublishedRelease` step this document used to describe as
 future/non-existent is `packages/publishing`'s Revision, landed in v0.4 —

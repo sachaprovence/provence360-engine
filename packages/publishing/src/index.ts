@@ -1,6 +1,34 @@
 export { assembleDraft } from "./draft-snapshot";
 export type { DraftAssembly, SiteSnapshot, SiteSnapshotPage } from "./draft-snapshot";
 
+export {
+  EMPTY_RESOLVED_NAVIGATION,
+  InvalidSnapshotError,
+  SNAPSHOT_SCHEMA_VERSION,
+  UnknownSnapshotVersionError,
+  mediaDescriptorSchema,
+  parseSiteSnapshot,
+  resolvedNavigationSchema,
+  resolvedNavigationTargetSchema,
+  siteSnapshotV2Schema,
+} from "./site-snapshot";
+export type {
+  MediaDescriptor,
+  ResolvedNavigation,
+  ResolvedNavigationItem,
+  ResolvedNavigationTarget,
+} from "./site-snapshot";
+
+export { resolveNavigation } from "./resolve-navigation";
+export type { NavigationResolution, PublishablePage } from "./resolve-navigation";
+
+export {
+  collectReferences,
+  resolveMediaManifest,
+  validateDomainReferences,
+} from "./media-manifest";
+export type { CollectedReferences } from "./media-manifest";
+
 export { snapshotsEqual } from "./snapshot-equal";
 
 export { createRevisionFromDraft } from "./create-revision";

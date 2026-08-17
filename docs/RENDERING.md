@@ -9,29 +9,39 @@ Luberon," which differ only in data, never in code).
 ## The resolution pipeline
 
 ```
-Host -> DomainResolver -> Site -> Published Revision -> Domain data -> Renderer
+Host -> DomainResolver -> Site -> Published Revision -> requested Page -> Domain data -> Renderer
 ```
 
 Extending [docs/ARCHITECTURE.md](ARCHITECTURE.md)'s pipeline now that a
-real Renderer, Content Graph, and (v0.4) Publishing Kernel exist.
-Concretely (`apps/web/app/page.tsx`):
+real Renderer, Content Graph, and (v0.4) Publishing Kernel, (v0.5) Content
+& Site Composition Kernel exist. Concretely
+(`apps/web/app/[[...slug]]/page.tsx`, `apps/web/lib/site-page.ts`):
 
 1. **Host → Site/Tenant** — unchanged since v0.1: `resolveSiteByHostname`
    via the narrow `provence360_resolver` role, no tenant context yet.
 2. **Site** — once `tenantId` is known, `withTenantContext(tenantId, ...)`
    opens an RLS-scoped transaction.
-3. **Published Revision** (v0.4) — `getPublishedRevision(tx, siteId)`
-   (`packages/publishing`) resolves `sites.published_revision_id` and
-   returns its frozen snapshot — the home Page's content and the Site's
-   already-_resolved_ theme tokens — or `null` if the Site has never been
-   published. See [docs/PUBLISHING.md](PUBLISHING.md). The live `pages`
-   table is never read by this pipeline.
-4. **Content → Domain data → Renderer** — `renderBlocks(homePage.content,
-context)` walks the Revision's frozen block array in order, and each
-   domain-bound block still loads its own _live_ Property/Unit/Amenity/
-   Media data through the same `tx` as it renders (see
-   [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md)) — only the content
-   _structure_ is frozen, never the referenced business data.
+3. **Published Revision** — `getPublishedRevision(tx, siteId)`
+   (`packages/publishing`) resolves `sites.published_revision_id`, parses
+   the stored snapshot through `parseSiteSnapshot` (v0.5 — the runtime
+   trust boundary, never a blind cast — see
+   [docs/PUBLISHING.md#snapshot-format--versioning-v05](PUBLISHING.md#snapshot-format--versioning-v05)),
+   and returns it — or `null` if never published, or the snapshot fails to
+   parse. See [docs/PUBLISHING.md](PUBLISHING.md). The live `pages` table
+   is never read by this pipeline.
+4. **requested Page** (v0.5) — the route's `slug` (`""` for `/`, `"about"`
+   for `/about`, ...) is looked up inside the Revision's own `pages`
+   array — any published Page, not only home, so a resolved internal
+   navigation link (see below) actually goes somewhere.
+5. **Content → Domain data → Renderer** — `renderBlocks(page.content,
+context)` walks the Revision's frozen block array in order. Domain-bound
+   blocks still load their own _live_ Property/Unit/Amenity data through
+   the same `tx` as they render (see [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md))
+   — only the content _structure_ is frozen, never the referenced business
+   data. Media-referencing blocks (Hero/Gallery) instead resolve from
+   `context.media` — the Revision's own frozen manifest — when rendering a
+   published page (v0.5, see "Media" in docs/PUBLISHING.md); the Site's
+   resolved navigation renders as page chrome via `renderNavigation`.
 
 The Site resolved by hostname is the **only** source of truth for which
 tenant a request belongs to — nothing the browser sends (a cookie, a
@@ -48,6 +58,7 @@ interface RenderContext {
   locale: string; // requested display locale
   defaultLocale: string; // the Site's own fallback (see LOCALIZATION.md)
   tokens: ThemeTokens; // already-resolved (base + overrides merged)
+  media?: ReadonlyMap<string, FrozenMediaDescriptor>; // v0.5, see below
 }
 ```
 
@@ -58,6 +69,19 @@ domain-bound block cannot accidentally (or deliberately) query outside its
 own tenant's data even if it tried. No deep presentation component ever
 opens its own connection or accepts a tenant id from anywhere else (see
 [docs/SECURITY.md](SECURITY.md)).
+
+**`media` (v0.5):** present, and authoritative, when rendering a
+_published_ Revision — the frozen manifest `apps/web` builds from
+`snapshot.media`. Hero/Gallery resolve a referenced id from here, not
+`tx`, so an already-published Revision's images can't change because the
+underlying MediaAsset row was edited afterward. Absent when rendering a
+Draft _preview_ (`apps/admin/.../preview`) — those blocks fall back to
+their pre-v0.5 live `tx` lookup, which is correct there: a preview must
+show today's draft media. `packages/renderer/src/resolve-media.ts` is the
+one place this branch lives. `packages/renderer` doesn't depend on
+`packages/publishing`; `FrozenMediaDescriptor` is declared locally in
+`render-context.ts`, structurally compatible with (a subset of)
+`packages/publishing`'s `MediaDescriptor`.
 
 ## Data loading and query count
 

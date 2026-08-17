@@ -5,7 +5,12 @@ export {
   getSite,
   getSiteBySlug,
   listSites,
+  updateSiteNavigation,
   updateSiteSettings,
   updateSiteTheme,
 } from "./site-repository";
-export type { UpdateSiteSettingsInput, UpdateSiteThemeInput } from "./site-repository";
+export type {
+  UpdateSiteNavigationInput,
+  UpdateSiteSettingsInput,
+  UpdateSiteThemeInput,
+} from "./site-repository";

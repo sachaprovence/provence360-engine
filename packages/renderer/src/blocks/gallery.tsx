@@ -1,6 +1,7 @@
 import type { GalleryProps } from "@provence360/content";
-import { listMediaAssetsByIds, resolveLocalizedString } from "@provence360/content";
+import { resolveLocalizedString } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
+import { resolveMediaDescriptors } from "../resolve-media";
 
 export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props, context }) => {
   const t = context.tokens;
@@ -8,11 +9,12 @@ export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props
     ? resolveLocalizedString(props.caption, context.locale, context.defaultLocale)
     : undefined;
 
-  // Tenant-scoped lookup: a stale or cross-tenant media id simply isn't
-  // returned, so it's silently skipped below rather than breaking the
-  // whole gallery (docs/RENDERING.md#error-handling).
-  const assets = await listMediaAssetsByIds(context.tx, props.mediaAssetIds);
-  const byId = new Map(assets.map((asset) => [asset.id, asset]));
+  // Published rendering resolves from the Revision's own frozen manifest;
+  // Draft preview falls back to a live, tenant-scoped lookup (see
+  // `resolve-media.ts`). Either way, a stale/cross-tenant/absent id simply
+  // isn't returned, so it's silently skipped below rather than breaking
+  // the whole gallery (docs/RENDERING.md#error-handling).
+  const byId = await resolveMediaDescriptors(props.mediaAssetIds, context);
 
   return (
     <section key={id} data-block="gallery" style={{ padding: t["spacing.medium"] }}>

@@ -7,6 +7,15 @@ was live immediately (`docs/ROADMAP.md`'s own "known gap"). This document
 is the ADR-level explanation of the model; `packages/publishing` is the
 implementation.
 
+**v0.5** (the Content & Site Composition Kernel — see
+[ADR 0017](adr/0017-site-composition-kernel.md)) extends this with a real,
+typed Site Composition Contract: a validated Navigation model (replacing
+the previously-opaque `navigation: unknown`), a generic block-reference
+mechanism that freezes referenced media into each Revision, and an
+explicitly-versioned, runtime-parsed snapshot format with legacy (v0.4)
+compatibility. Everything below folds those changes in; ADR 0017 has the
+full reasoning.
+
 ## The four concepts
 
 **Draft** — the Site's current, mutable, editable state. Deliberately
@@ -22,9 +31,13 @@ currently published."
 `createRevisionFromDraft`. Holds:
 
 - `revisionNumber` — monotonic per Site, starting at 1.
-- `snapshot` (JSONB) — the Site's presentation fields, its fully _resolved_
-  theme tokens (not a live `themeId` reference — see below), and every
-  `active` Page's validated block content, ordered by slug.
+- `snapshot` (JSONB) — a versioned document (`schemaVersion: 2`, see
+  [ADR 0017](adr/0017-site-composition-kernel.md#decision-5--snapshot-schema-versioning-and-legacy-compatibility)):
+  the Site's presentation fields including its _resolved_ navigation, its
+  fully _resolved_ theme tokens (not a live `themeId` reference — see
+  below), every `active` Page's validated block content ordered by slug,
+  and a frozen, deduplicated manifest of every referenced MediaAsset
+  (`media` — see "Media" below).
 - `createdByUserId`, `createdAt`.
 
 Append-only at the database level: `site_revisions` has SELECT and INSERT
@@ -65,6 +78,77 @@ frozen at Revision-creation time, not referenced by `themeId` — a later
 re-theme of the Site can never retroactively change how an already-
 published Revision looked.
 
+## Navigation (v0.5)
+
+`packages/content/src/navigation.ts`'s `navigationSchema` is the typed
+Draft-side contract: `{ version: 1, items: NavigationItem[] }`, each item
+a stable `id`, a `LocalizedString` label, and a discriminated `target` —
+`{ kind: "page", pageId }` (references a Page by its stable id, never its
+mutable slug) or `{ kind: "external", href, newTab? }` (the same
+`safeHrefSchema` allowlist every other link-shaped block prop already
+uses). Bounded depth (2 levels), bounded item counts, globally-unique ids.
+`packages/sites`' `updateSiteNavigation` validates this shape at write
+time — but cannot confirm a `pageId` names a real Page (JSONB has no
+foreign key); see "Referential vs structural validation" below.
+
+At publish time, `assembleDraft` resolves every `{ kind: "page", pageId }`
+target to `{ kind: "page", slug }` against the exact Pages being published
+(`resolve-navigation.ts`'s `resolveNavigation`, using the same in-memory
+list `assembleDraft` already loaded — no second query, see Concurrency
+below). A `pageId` that doesn't resolve — nonexistent, another Site,
+another Tenant, or a draft/archived Page — is a `navigation_page_not_found`
+issue; these causes are indistinguishable by construction, the same
+fail-closed contract every other tenant-scoped lookup in this codebase
+uses. The _resolved_ navigation is what freezes into the Revision —
+renaming the target Page's slug in the Draft afterward never changes an
+already-published Revision's navigation. See
+[ADR 0017](adr/0017-site-composition-kernel.md#decision-2--draft-refs-vs-published-resolved-refs).
+
+## Media (v0.5)
+
+Every block that references a MediaAsset declares it via
+`BlockDefinition.references` (`packages/content`'s generic
+reference-extraction mechanism — no central switch over block types); a
+Page's `seo.ogImageMediaId` is collected the same way. At publish time,
+`media-manifest.ts`'s `resolveMediaManifest` resolves every referenced id
+under the current tenant context, and freezes a deduplicated,
+deterministically-ordered `MediaDescriptor[]` (id, kind, storageKey,
+mimeType, width, height, altText — never the binary itself) into the
+snapshot's `media` field. A reference that doesn't resolve — missing or
+cross-tenant — is a `media_reference_missing` publish-blocking issue: an
+immutable Revision must never freeze a broken reference.
+
+The public runtime renders Hero/Gallery images from this frozen manifest,
+never a live database lookup — editing a MediaAsset's `storageKey`/
+`altText` after publish never changes an already-published Revision's
+appearance. Draft preview (`apps/admin/.../preview`) has no manifest to
+use and correctly falls back to a live, tenant-scoped lookup instead — it
+must show _today's_ draft media. See
+[ADR 0017](adr/0017-site-composition-kernel.md#decision-4--media-presentation-frozen-business-live-extended-to-media).
+
+Domain-bound blocks (PropertySummary/UnitGrid/Amenities) get a lighter
+publish-time check — their referenced `propertyId`/`unitId` must exist for
+the current tenant (`domain_reference_missing` if not) — but nothing about
+that row is frozen; Property/Unit/Amenity data stays entirely live, per
+v0.4's own boundary (unchanged, see below).
+
+## Snapshot format & versioning (v0.5)
+
+`site_revisions.snapshot` carries an explicit `schemaVersion` (currently
+`2`). `packages/publishing/src/site-snapshot.ts`'s `parseSiteSnapshot` is
+the one runtime trust boundary every stored snapshot passes through
+before any caller (the public runtime, the admin draft-summary
+comparison) treats it as typed data — replacing what were previously bare
+`revision.snapshot as SiteSnapshot` casts. A v0.4 Revision (no
+`schemaVersion` field) is recognized and normalized: its navigation
+becomes empty (it was never validated or resolved to begin with — nothing
+in v0.4 ever rendered it) and its media manifest is left **absent**, not
+empty — the renderer's own signal to fall back to a live lookup for that
+one Revision, matching its pre-v0.5 behavior exactly. A malformed document
+or an unrecognized `schemaVersion` fails closed — logged, treated as
+"nothing to render," never a 500 and never a fallback to the Draft. See
+[ADR 0017](adr/0017-site-composition-kernel.md#decision-5--snapshot-schema-versioning-and-legacy-compatibility).
+
 ## Validation before publish
 
 `packages/publishing/src/draft-snapshot.ts`'s `assembleDraft` is a single
@@ -79,7 +163,16 @@ Concurrency below). It checks:
 - every `active` Page's `content` still parses via `parsePageContentStrict`
   (re-validated, not trusted — a block registry can loosen/tighten over
   time, see `docs/adr/0014-block-registry-versioning.md`);
-- the theme resolves without throwing.
+- the theme resolves without throwing;
+- **(v0.5)** the Site's navigation is structurally valid and every
+  internal (`pageId`) target resolves to a publishable Page of this Site
+  (`navigation_page_not_found` otherwise — see "Navigation" above);
+- **(v0.5)** every media reference any block/SEO field holds resolves to a
+  tenant-owned MediaAsset (`media_reference_missing` otherwise — see
+  "Media" above);
+- **(v0.5)** every domain-bound block's `propertyId`/`unitId` reference
+  exists for this tenant (`domain_reference_missing` otherwise — see
+  "Media" above; this check does not freeze the referenced row).
 
 A `draft`/`archived` Page is excluded from the snapshot — `pageStatusValues`
 already existed precisely so an author can keep a Page out of the next
@@ -188,19 +281,34 @@ account could open — is the one documented gap; see Risks below.
 
 ## Public runtime
 
-`apps/web/app/page.tsx`: `Host → DomainResolver → Site → Published
-Revision → Renderer`. The one read is
-`packages/publishing`'s `getPublishedRevision(tx, siteId)`, which resolves
-`sites.published_revision_id` and returns its Revision's snapshot, or
-`null`. The route never queries `pages` directly and never accepts a
-`tenantId` from anything the browser sends — the resolver's hostname
-lookup remains the only source of truth for tenant, unchanged from v0.1.
+`apps/web/app/[[...slug]]/page.tsx` (v0.5 — an optional catch-all,
+replacing v0.4's root-only `app/page.tsx`): `Host → DomainResolver → Site →
+Published Revision → requested Page → Renderer`. `apps/web/lib/site-page.ts`'s
+`renderPublishedPage(slug)` is the shared pipeline (wrapped in React's
+`cache()` so `generateMetadata` and the page component share one DB round
+trip): `getPublishedRevision(tx, siteId)` resolves
+`sites.published_revision_id` and returns the parsed, typed Revision
+snapshot or `null`; the requested `slug` is then looked up inside that
+snapshot's own `pages` array — **never** a fresh `pages` table query, so
+resolving any Page (not only home) adds no new draft-read surface, only a
+new _published_ one. The route never accepts a `tenantId` from anything
+the browser sends — the resolver's hostname lookup remains the only
+source of truth for tenant, unchanged from v0.1.
 
-A Site with no publication (`published_revision_id IS NULL`) — or whose
-published Revision has no `home` page in its frozen snapshot — 404s: the
-same deterministic response an unresolvable hostname already produced
-pre-v0.4, so "never published" is indistinguishable from "domain doesn't
+A Site with no publication (`published_revision_id IS NULL`), whose
+published Revision has no `home` page in its frozen snapshot, or whose
+snapshot fails to parse (`parseSiteSnapshot` — malformed or unknown
+version, see "Snapshot format & versioning" above) all 404 the same way:
+the same deterministic response an unresolvable hostname already produced
+pre-v0.4, so none of these is distinguishable from "domain doesn't
 resolve." No new information leak about a tenant's setup progress.
+
+**SEO (v0.5):** `generateMetadata` reads `title`/`description`/
+`canonicalPath`/`noIndex`/`noFollow`/`ogImageMediaId` from the _resolved_
+Page's `seo` field inside the published snapshot — never the Draft. This
+is the first place `packages/content`'s existing `seoSchema` contract
+(validated since v0.3, never previously read by anything) is actually
+wired into rendered output.
 
 ## Permissions
 

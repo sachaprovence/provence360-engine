@@ -1,71 +1,58 @@
 import { and, asc, eq } from "drizzle-orm";
-import type { AppTx, PageType } from "@provence360/database";
+import type { AppTx } from "@provence360/database";
 import { pages, sites } from "@provence360/database";
 import {
   MalformedBlockEnvelopeError,
+  parseDraftNavigation,
   parsePageContentStrict,
   type ParsedBlock,
   type Seo,
 } from "@provence360/content";
-import { getTheme, resolveTheme, type ThemeTokens } from "@provence360/themes";
+import { getTheme, resolveTheme } from "@provence360/themes";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import type { PublishValidationIssue } from "./errors";
 import { SiteNotFoundError } from "./errors";
+import {
+  collectReferences,
+  resolveMediaManifest,
+  validateDomainReferences,
+} from "./media-manifest";
+import { resolveNavigation } from "./resolve-navigation";
+import { SNAPSHOT_SCHEMA_VERSION, type SiteSnapshot, type SiteSnapshotPage } from "./site-snapshot";
 
-export interface SiteSnapshotPage {
-  slug: string;
-  internalName: string;
-  pageType: PageType;
-  seo: Seo;
-  content: ParsedBlock[];
-}
-
-export interface SiteSnapshot {
-  site: {
-    name: string;
-    publicName: string | null;
-    timezone: string;
-    defaultLocale: string;
-    enabledLocales: string[];
-    contactEmail: string | null;
-    contactPhone: string | null;
-    navigation: unknown;
-    features: Record<string, unknown>;
-  };
-  theme: {
-    themeId: string | null;
-    tokens: ThemeTokens;
-  };
-  pages: SiteSnapshotPage[];
-}
+export type { SiteSnapshot, SiteSnapshotPage } from "./site-snapshot";
 
 export type DraftAssembly =
   { valid: true; snapshot: SiteSnapshot } | { valid: false; issues: PublishValidationIssue[] };
 
 /**
  * The single pass that both validates a Site's draft and builds the
- * immutable snapshot a Revision freezes — one function, not two, so
+ * immutable v2 snapshot a Revision freezes — one function, not two, so
  * validating and snapshotting always see the *same* read of each Page's
- * content (see docs/PUBLISHING.md#concurrency for why running them as
- * separate queries would open a race: a concurrent edit could land between
- * a "validate" pass and a later "snapshot" pass under READ COMMITTED).
+ * content, the Site's navigation, and every referenced media/domain id
+ * (see docs/PUBLISHING.md#concurrency for why running these as separate
+ * queries would open a race: a concurrent edit could land between a
+ * "validate" pass and a later "snapshot" pass under READ COMMITTED).
  *
- * What gets frozen into `snapshot`: the Site's presentation fields, its
- * fully *resolved* theme tokens (never a live `themeId` reference — a
- * later re-theme can't retroactively change how an already-published
- * Revision looked), and every "active" Page's content, ordered by slug for
- * a deterministic document (Postgres gives no row-order guarantee without
- * ORDER BY, and a non-deterministic snapshot would make "does this site
- * have unpublished changes" flap on every check). Draft/archived Pages are
- * excluded — `pageStatusValues` already exists precisely so an author can
- * keep a Page out of the next publish.
+ * What gets frozen into `snapshot` (v0.5, section 4/7 of the brief): the
+ * Site's presentation fields, its *resolved* navigation (internal links
+ * pointing at a Page's `slug`, not its mutable `pageId` — see
+ * `resolve-navigation.ts`), its fully *resolved* theme tokens, every
+ * "active" Page's content (ordered by slug for a deterministic document),
+ * and a frozen, deduplicated manifest of every MediaAsset any block/SEO
+ * field on those pages references (`media-manifest.ts`). Draft/archived
+ * Pages are excluded — `pageStatusValues` already exists precisely so an
+ * author can keep a Page out of the next publish.
  *
  * Deliberately does NOT touch Property/Unit/Amenity data — see
  * docs/SITE_DOMAIN.md#future-release-compatibility: a PropertySummary/
  * UnitGrid/Amenities block always renders *today's* live business data,
- * even under an old Revision, the same way a printed brochure's phone
- * number isn't "frozen" by being printed. The public runtime still needs a
- * tenant-scoped `tx` to render those blocks — see apps/web's SitePage.
+ * even under an old Revision. Publish-time validation still confirms a
+ * referenced Property/Unit id exists for this tenant (section 10 of the
+ * brief) — a manifestly broken or cross-tenant reference is rejected
+ * before it's frozen — but nothing about that row's own fields is copied
+ * into the snapshot. The public runtime still needs a tenant-scoped `tx`
+ * to render those blocks — see apps/web's SitePage.
  */
 export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAssembly> {
   const tenantId = requireCurrentTenantId();
@@ -84,19 +71,22 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
 
   const issues: PublishValidationIssue[] = [];
   const snapshotPages: SiteSnapshotPage[] = [];
+  const parsedByPage: { content: ParsedBlock[]; seo: Seo }[] = [];
 
   let hasHomePage = false;
   for (const page of activePages) {
     if (page.pageType === "home") hasHomePage = true;
     try {
       const content = parsePageContentStrict(page.content);
+      const seo = page.seo as Seo;
       snapshotPages.push({
         slug: page.slug,
         internalName: page.internalName,
         pageType: page.pageType,
-        seo: page.seo as Seo,
+        seo,
         content,
       });
+      parsedByPage.push({ content, seo });
     } catch (error) {
       issues.push({
         code: "invalid_page_content",
@@ -117,7 +107,7 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
     });
   }
 
-  let tokens: ThemeTokens;
+  let tokens;
   try {
     const theme = site.themeId ? await getTheme(tx, site.themeId) : null;
     tokens = resolveTheme(theme?.tokens, site.themeOverrides);
@@ -130,11 +120,40 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
     return { valid: false, issues };
   }
 
+  // Navigation: structural parse, then resolve pageId -> slug against the
+  // exact same in-memory list of this Site's active Pages loaded above —
+  // no second query (see this function's own docstring on why).
+  const publishablePages = activePages.map((page) => ({ id: page.id, slug: page.slug }));
+  let resolvedNavigation;
+  try {
+    const draftNavigation = parseDraftNavigation(site.navigation);
+    const resolution = resolveNavigation(draftNavigation, publishablePages);
+    resolvedNavigation = resolution.navigation;
+    issues.push(...resolution.issues);
+  } catch (error) {
+    issues.push({
+      code: "invalid_navigation",
+      message: error instanceof Error ? `Navigation: ${error.message}` : "Navigation is invalid.",
+    });
+    resolvedNavigation = { items: [] };
+  }
+
+  // Media + domain references: collected from every page that parsed
+  // successfully above (a page that failed to parse contributes nothing
+  // to look up — its own issue already blocks the publish).
+  const { mediaIds, domainRefs } = collectReferences(parsedByPage);
+  const [{ media, issues: mediaIssues }, domainIssues] = await Promise.all([
+    resolveMediaManifest(tx, mediaIds),
+    validateDomainReferences(tx, domainRefs),
+  ]);
+  issues.push(...mediaIssues, ...domainIssues);
+
   if (issues.length > 0) return { valid: false, issues };
 
   return {
     valid: true,
     snapshot: {
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       site: {
         name: site.name,
         publicName: site.publicName,
@@ -143,7 +162,7 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
         enabledLocales: site.enabledLocales as string[],
         contactEmail: site.contactEmail,
         contactPhone: site.contactPhone,
-        navigation: site.navigation,
+        navigation: resolvedNavigation,
         features: site.features as Record<string, unknown>,
       },
       theme: {
@@ -151,6 +170,7 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
         tokens,
       },
       pages: snapshotPages,
+      media,
     },
   };
 }
