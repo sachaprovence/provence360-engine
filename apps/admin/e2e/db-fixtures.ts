@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { loadDotEnv, pages, properties, sites, tenants } from "@provence360/database";
+import { loadDotEnv, pages, properties, sites, tenants, virtualTours } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
 
 // These E2E tests run against the seeded dev database (`pnpm db:seed`),
@@ -48,6 +48,22 @@ export async function propertyIdBySlug(slug: string): Promise<string> {
     .where(eq(properties.slug, slug));
   if (!row) {
     throw new Error(`Property "${slug}" was not found — run \`pnpm db:seed\` first.`);
+  }
+  return row.id;
+}
+
+// v0.7.1 — the VirtualTours admin form (virtual-tours-form.tsx) never
+// exposes a created tour's id in the DOM (only its name/provider/status),
+// so an E2E test that needs to reference a just-created tour's id — to add
+// a `virtual-tour` block pointing at it — has to look it up. Scoped by
+// `publicName`, which every v0.7.1 spec below gives a unique-per-run value.
+export async function virtualTourIdByPublicName(publicName: string): Promise<string> {
+  const [row] = await getAdminDb()
+    .select({ id: virtualTours.id })
+    .from(virtualTours)
+    .where(eq(virtualTours.publicName, publicName));
+  if (!row) {
+    throw new Error(`VirtualTour "${publicName}" was not found.`);
   }
   return row.id;
 }

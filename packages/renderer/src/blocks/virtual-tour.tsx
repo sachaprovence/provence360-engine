@@ -7,6 +7,7 @@ import {
 import type { BlockRenderer } from "../block-renderer-registry";
 import { resolveMediaDescriptor } from "../resolve-media";
 import { DomainReferenceUnavailable } from "./domain-reference-unavailable";
+import { VirtualTourEmbed } from "./virtual-tour-embed";
 
 // `paddingBottom` percentages implementing the classic intrinsic-ratio
 // technique (a fixed-position child filling an absolutely-sized parent) —
@@ -29,12 +30,16 @@ const aspectRatioPadding: Record<VirtualTourProps["aspectRatio"], string> = {
 // to `null`, rendering `DomainReferenceUnavailable` instead of throwing,
 // exactly like `property-summary`/`unit-grid`.
 //
-// The `src` this component passes to `<iframe>` is never derived from
-// anything admin- or visitor-supplied at render time: it comes only from
-// `buildSafeVirtualTourEmbed`, which in turn only ever returns a
-// registered provider's own deterministic, first-party-constructed URL
-// (see `packages/virtual-tours/src/embed.ts`). No `dangerouslySetInnerHTML`,
-// no stored HTML/iframe string, ever.
+// v0.7.1 — everything above (and the `embed.src`/poster resolution below)
+// stays entirely server-side; only the interactive click-to-load surface
+// is delegated to `VirtualTourEmbed`, a client component (see
+// docs/adr/0020-virtual-tour-experience-hardening.md). This function never
+// constructs an `<iframe>` itself and never passes anything to
+// `VirtualTourEmbed` beyond the already-safe `embed.src`
+// (`buildSafeVirtualTourEmbed`'s own deterministic, first-party-constructed
+// URL — see `packages/virtual-tours/src/embed.ts`) and plain presentational
+// strings. No `dangerouslySetInnerHTML`, no stored HTML/iframe string,
+// ever.
 export const virtualTourRendererV1: BlockRenderer<VirtualTourProps> = async ({
   id,
   props,
@@ -53,32 +58,28 @@ export const virtualTourRendererV1: BlockRenderer<VirtualTourProps> = async ({
     ? await resolveMediaDescriptor(props.posterMediaId, context)
     : null;
 
+  // Contextualized per section 6 of the v0.7.1 brief — never the bare
+  // "iframe"/"Matterport" a naive embed snippet would use.
+  const embedTitle =
+    context.locale === "en"
+      ? `Virtual tour — ${tour.publicName}`
+      : `Visite virtuelle — ${tour.publicName}`;
+
   return (
     <section key={id} data-block="virtual-tour" style={{ padding: t["spacing.medium"] }}>
       {props.showTitle ? (
         <h2 style={{ fontFamily: t["font.heading"], marginTop: 0 }}>{tour.publicName}</h2>
       ) : null}
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          paddingBottom: aspectRatioPadding[props.aspectRatio],
-          background: poster
-            ? `${t["color.surface"]} url(${poster.storageKey}) center/cover`
-            : t["color.surface"],
-          borderRadius: t["radius.large"],
-          overflow: "hidden",
-        }}
-      >
-        <iframe
-          src={embed.src}
-          title={tour.publicName}
-          loading="lazy"
-          allowFullScreen={embed.allowFullscreen}
-          allow={embed.iframeAllow}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
-        />
-      </div>
+      <VirtualTourEmbed
+        title={embedTitle}
+        src={embed.src}
+        allowFullscreen={embed.allowFullscreen}
+        {...(embed.iframeAllow ? { iframeAllow: embed.iframeAllow } : {})}
+        posterUrl={poster?.storageKey ?? null}
+        aspectRatioPadding={aspectRatioPadding[props.aspectRatio]}
+        tokens={t}
+        locale={context.locale}
+      />
     </section>
   );
 };
