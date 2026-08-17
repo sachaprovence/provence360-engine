@@ -8,12 +8,13 @@ import {
   type ParsedBlock,
   type Seo,
 } from "@provence360/content";
-import { getTheme, resolveTheme } from "@provence360/themes";
+import { getTheme, resolveSiteBranding, resolveTheme } from "@provence360/themes";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import type { PublishValidationIssue } from "./errors";
 import { SiteNotFoundError } from "./errors";
 import {
   collectReferences,
+  resolveBrandMedia,
   resolveMediaManifest,
   validateDomainReferences,
 } from "./media-manifest";
@@ -120,6 +121,25 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
     return { valid: false, issues };
   }
 
+  // v0.8 — structurally invalid stored branding overrides (a corrupted
+  // row, or a raw DB edit that bypassed `updateSiteBranding`'s own
+  // validation) is publish-blocking, exactly like `invalid_theme` above —
+  // never silently frozen as-is. A *missing* logo/favicon reference is a
+  // separate, non-blocking concern handled below by `resolveBrandMedia`.
+  let branding;
+  try {
+    branding = resolveSiteBranding(site.branding);
+  } catch (error) {
+    issues.push({
+      code: "invalid_branding",
+      message:
+        error instanceof Error
+          ? `Branding: ${error.message}`
+          : "Branding configuration is invalid.",
+    });
+    return { valid: false, issues };
+  }
+
   // Navigation: structural parse, then resolve pageId -> slug against the
   // exact same in-memory list of this Site's active Pages loaded above —
   // no second query (see this function's own docstring on why).
@@ -142,13 +162,27 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
   // successfully above (a page that failed to parse contributes nothing
   // to look up — its own issue already blocks the publish).
   const { mediaIds, domainRefs } = collectReferences(parsedByPage);
-  const [{ media, issues: mediaIssues }, domainIssues] = await Promise.all([
-    resolveMediaManifest(tx, mediaIds),
-    validateDomainReferences(tx, domainRefs),
-  ]);
+  const [{ media, issues: mediaIssues }, domainIssues, { brand, media: brandMedia }] =
+    await Promise.all([
+      resolveMediaManifest(tx, mediaIds),
+      validateDomainReferences(tx, domainRefs),
+      // v0.8 — deliberately NOT `resolveMediaManifest`: a missing/stale
+      // logo/favicon reference degrades to "no logo" (see
+      // docs/adr/0021-site-theme-branding-design-system.md), never blocks
+      // publishing the whole site the way a broken content-block media
+      // reference does.
+      resolveBrandMedia(tx, branding.brand),
+    ]);
   issues.push(...mediaIssues, ...domainIssues);
 
   if (issues.length > 0) return { valid: false, issues };
+
+  // One deduplicated, id-sorted manifest — a brand logo that's ALSO used
+  // as a content-block image (unlikely, but not forbidden) is frozen once,
+  // not twice.
+  const mediaById = new Map(media.map((descriptor) => [descriptor.id, descriptor]));
+  for (const descriptor of brandMedia) mediaById.set(descriptor.id, descriptor);
+  const mergedMedia = [...mediaById.values()].sort((a, b) => a.id.localeCompare(b.id));
 
   return {
     valid: true,
@@ -169,8 +203,9 @@ export async function assembleDraft(tx: AppTx, siteId: string): Promise<DraftAss
         themeId: site.themeId,
         tokens,
       },
+      branding: { ...branding, brand },
       pages: snapshotPages,
-      media,
+      media: mergedMedia,
     },
   };
 }

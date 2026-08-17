@@ -270,6 +270,42 @@ for the full reasoning; the security-relevant guarantees, specifically:
   iframe additionally withholds the tenant site's own URL from Matterport.
   See [ADR 0020](adr/0020-virtual-tour-experience-hardening.md#decision-9--privacy-zero-requests-to-the-providers-origin-before-a-click).
 
+## Site branding (v0.8)
+
+A per-site brand identity (colors, fonts, logo/favicon, button/section
+style) is inherently a "let the tenant put arbitrary strings into the
+rendered page" feature — the whole design exists to make that safe. See
+[ADR 0021](adr/0021-site-theme-branding-design-system.md) for full
+reasoning; the security-relevant guarantees:
+
+- **Colors are hex-only, allowlisted.** `packages/validation/src/color.ts`'s
+  `hexColorSchema` accepts only `#RGB`/`#RRGGBB`; every non-hex form —
+  `rgb()`/`hsl()`, named colors, `var(...)`, `url(...)`,
+  `expression(...)`, `javascript:`, `data:`, `blob:`, and `</style>`-style
+  breakout attempts — is rejected at the schema boundary before it can
+  ever be stored, let alone rendered. Verified with the brief's exact
+  payload list in `color.test.ts` and `branding.test.ts`.
+- **Typography is a closed, web-safe stack registry — never a font URL.**
+  `FontToken` is a fixed 5-value enum; there is no field anywhere a font
+  URL, `@import`, or arbitrary `font-family` string could occupy.
+- **Logo/favicon are UUID references into the existing Media system,
+  never a raw external URL.** Same tenant-scoped `MediaAsset` catalog
+  Hero/Gallery already use — no second, parallel asset pipeline, no field
+  that could hold an attacker-supplied image URL.
+- **No `dangerouslySetInnerHTML` anywhere in the branding pipeline**
+  (grep-verified across `packages/renderer`, `packages/themes`, both
+  apps). Every resolved value — including the closed `--site-*` CSS
+  custom-property set `createBrandingCssVariables` emits — flows through
+  a plain React `style={{ ... }}` object, never a `<style>` tag or raw
+  HTML string.
+- **Variable names are fixed in code; only values come from the tenant,
+  and only after passing the closed schema above.** A tenant can never
+  introduce a new CSS custom-property name, only a validated value for
+  one of the fixed set already defined in `resolve-branding.ts`.
+- **Contrast is a non-blocking warning, never a silent rewrite.** A
+  tenant's chosen colors are never auto-corrected — see ADR 0021,
+  Decision 11.
+
 ## Known gaps (tracked, not hidden)
 
 - **No password-reset / email-verification flow.** A user is provisioned by an existing tenant OWNER/ADMIN or the seed script; there is no self-service "forgot password." See [docs/AUTHENTICATION.md](AUTHENTICATION.md).

@@ -2,9 +2,14 @@ import type { HeroProps } from "@provence360/content";
 import { resolveLocalizedString } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
 import { resolveMediaDescriptor } from "../resolve-media";
+import { resolveButtonStyle } from "../resolve-branding";
 
 export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, context }) => {
   const t = context.tokens;
+  const buttonStyle = resolveButtonStyle(
+    { base: t["color.primary"], foreground: t["color.primaryContrast"] },
+    context.branding.buttons.primary.style,
+  );
   const headline = resolveLocalizedString(props.headline, context.locale, context.defaultLocale);
   const subheadline = props.subheadline
     ? resolveLocalizedString(props.subheadline, context.locale, context.defaultLocale)
@@ -55,8 +60,9 @@ export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, cont
             display: "inline-block",
             marginTop: t["spacing.medium"],
             padding: `${t["spacing.small"]} ${t["spacing.medium"]}`,
-            background: t["color.primary"],
-            color: t["color.primaryContrast"],
+            background: buttonStyle.background,
+            color: buttonStyle.color,
+            border: buttonStyle.border,
             borderRadius: t["radius.small"],
             textDecoration: "none",
           }}

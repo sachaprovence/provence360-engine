@@ -10,7 +10,7 @@ export {
   parseSiteSnapshot,
   resolvedNavigationSchema,
   resolvedNavigationTargetSchema,
-  siteSnapshotV2Schema,
+  siteSnapshotV3Schema,
 } from "./site-snapshot";
 export type {
   MediaDescriptor,
@@ -24,6 +24,7 @@ export type { NavigationResolution, PublishablePage } from "./resolve-navigation
 
 export {
   collectReferences,
+  resolveBrandMedia,
   resolveMediaManifest,
   validateDomainReferences,
 } from "./media-manifest";

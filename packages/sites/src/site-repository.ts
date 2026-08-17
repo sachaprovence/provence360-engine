@@ -4,7 +4,12 @@ import { sites } from "@provence360/database";
 import { navigationSchema, type Navigation } from "@provence360/content";
 import { recordAuditLog } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
-import { themeOverridesSchema, type ThemeOverrides } from "@provence360/themes";
+import {
+  parseSiteBrandingOverrides,
+  themeOverridesSchema,
+  type SiteBrandingOverrides,
+  type ThemeOverrides,
+} from "@provence360/themes";
 
 export class SiteNotFoundError extends Error {
   constructor(siteId: string) {
@@ -210,6 +215,47 @@ export async function updateSiteTheme(tx: AppTx, input: UpdateSiteThemeInput) {
       metadata: { overrideKeys: Object.keys(overrides) },
     });
   }
+
+  return row;
+}
+
+export interface UpdateSiteBrandingInput {
+  id: string;
+  /** Raw, tenant-authored overrides — validated here via `parseSiteBrandingOverrides` before ever reaching the database (v0.8, see docs/adr/0021-site-theme-branding-design-system.md). */
+  branding: unknown;
+  actorUserId?: string;
+}
+
+/**
+ * Sets a Site's Draft branding overrides (v0.8) — the second, additive
+ * customization layer on top of `updateSiteTheme`'s `themeOverrides`
+ * above: brand identity, an expanded semantic color set, and closed
+ * typography/radius/spacing/button/section tokens. Stores exactly the
+ * overrides the tenant chose to set, never the fully-resolved object
+ * (`resolveSiteBranding` does that at read/render time) — the same
+ * "store the delta, resolve on read" shape `themeOverrides` already uses.
+ * Never affects the public site until the next publish: this write only
+ * ever touches the Draft `sites.branding` column, never a
+ * `site_revisions` row.
+ */
+export async function updateSiteBranding(tx: AppTx, input: UpdateSiteBrandingInput) {
+  const tenantId = requireCurrentTenantId();
+  const branding: SiteBrandingOverrides = parseSiteBrandingOverrides(input.branding);
+
+  const [row] = await tx
+    .update(sites)
+    .set({ branding })
+    .where(and(eq(sites.id, input.id), eq(sites.tenantId, tenantId)))
+    .returning();
+  if (!row) throw new SiteNotFoundError(input.id);
+
+  await recordAuditLog(tx, {
+    ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
+    action: "SITE_BRANDING_UPDATED",
+    targetType: "site",
+    targetId: row.id,
+    metadata: { overrideSections: Object.keys(branding) },
+  });
 
   return row;
 }

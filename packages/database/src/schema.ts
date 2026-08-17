@@ -339,6 +339,18 @@ export const sites = pgTable(
     // fallback tokens rather than failing to render at all.
     themeId: uuid("theme_id").references(() => themes.id, { onDelete: "set null" }),
     themeOverrides: jsonb("theme_overrides").notNull().default({}),
+    // v0.8 — Site Theme, Branding & Design System Kernel (see
+    // docs/adr/0021-site-theme-branding-design-system.md and
+    // packages/themes' branding.ts). A second, additive layer on top of
+    // `themeOverrides` above: per-tenant brand identity (name/logo/
+    // favicon), an expanded semantic color set, closed typography/radius/
+    // spacing/button/section tokens — validated by
+    // `siteBrandingOverridesV1Schema` at every write, never trusted as
+    // opaque JSON. `{}` (the column's own default) means "unconfigured" —
+    // `resolveSiteBranding` treats it identically to `null`, resolving
+    // straight to `DEFAULT_SITE_BRANDING`, so an existing pre-v0.8 site
+    // keeps rendering unchanged.
+    branding: jsonb("branding").notNull().default({}),
     // Ordered nav items ({ label, href }-shaped, validated by
     // packages/content's NavigationSchema) and a flat feature-flag object
     // (validated against a closed key catalog) — both genuinely

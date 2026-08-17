@@ -23,3 +23,10 @@ export type {
 export { resolveMediaDescriptor, resolveMediaDescriptors } from "./resolve-media";
 
 export { resolveSiteThemeTokens } from "./resolve-site-theme";
+
+export {
+  createBrandingCssVariables,
+  resolveButtonStyle,
+  resolveSectionStyle,
+} from "./resolve-branding";
+export type { ButtonVisualStyle, SectionVisualStyle } from "./resolve-branding";

@@ -1,5 +1,5 @@
 import type { AppTx } from "@provence360/database";
-import type { ThemeTokens } from "@provence360/themes";
+import type { SiteBrandingV1, ThemeTokens } from "@provence360/themes";
 
 /**
  * The minimal shape a block renderer needs to draw a referenced media
@@ -30,6 +30,11 @@ export interface FrozenMediaDescriptor {
  * fallback (see `resolveLocalizedString` in `packages/content`). `tokens`
  * is the already-resolved theme (`resolveTheme()` — base + site overrides
  * merged), never the raw base theme or raw overrides individually.
+ * `branding` (v0.8) is the sibling resolved value for the second,
+ * per-tenant branding layer (`resolveSiteBranding()` — `DEFAULT_SITE_BRANDING`
+ * + Site's own overrides merged), always present, never the raw stored
+ * overrides — see `packages/renderer/src/resolve-branding.ts` and
+ * docs/adr/0021-site-theme-branding-design-system.md.
  *
  * `media` (v0.5, optional): when rendering a **published** Revision, this
  * is the Revision's own frozen media manifest, keyed by MediaAsset id — a
@@ -64,6 +69,7 @@ export interface RenderContext {
   locale: string;
   defaultLocale: string;
   tokens: ThemeTokens;
+  branding: SiteBrandingV1;
   media?: ReadonlyMap<string, FrozenMediaDescriptor> | undefined;
   publicOnly?: boolean | undefined;
 }

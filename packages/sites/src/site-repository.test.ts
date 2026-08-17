@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sites } from "@provence360/database";
+import { DEFAULT_SITE_BRANDING, resolveSiteBranding } from "@provence360/themes";
 import {
   createTenant,
   createTheme,
@@ -13,6 +14,7 @@ import {
   createSite,
   getSiteBySlug,
   listSites,
+  updateSiteBranding,
   updateSiteNavigation,
   updateSiteSettings,
   updateSiteTheme,
@@ -250,6 +252,158 @@ describe("updateSiteTheme", () => {
         updateSiteTheme(tx, { id: siteB.id, themeId: theme.id }),
       ),
     ).rejects.toThrow(SiteNotFoundError);
+  });
+});
+
+// v0.8 — Site Theme, Branding & Design System Kernel (see
+// docs/adr/0021-site-theme-branding-design-system.md). Mirrors
+// `updateSiteTheme`'s own test shape exactly — same isolation discipline,
+// same "reads back what was written," "two sites diverge independently,"
+// "rejects a structurally invalid override," "cross-tenant write is
+// refused" matrix, applied to the second, additive branding layer.
+describe("updateSiteBranding", () => {
+  it("a freshly created site resolves to DEFAULT_SITE_BRANDING (backward compatibility, section 11)", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+    expect(resolveSiteBranding(site.branding)).toEqual(DEFAULT_SITE_BRANDING);
+  });
+
+  it("sets branding overrides, readable back and resolved on top of the default", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateSiteBranding(tx, {
+        id: site.id,
+        branding: { version: 1, colors: { primary: "#ff0000" } },
+      }),
+    );
+    const resolved = resolveSiteBranding(updated.branding);
+    expect(resolved.colors.primary).toBe("#ff0000");
+    expect(resolved.colors.background).toBe(DEFAULT_SITE_BRANDING.colors.background);
+  });
+
+  it("two sites can override branding differently, independently", async () => {
+    const tenant = await createTenant();
+    const siteA = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "a", name: "A" }),
+    );
+    const siteB = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteBranding(tx, {
+        id: siteA.id,
+        branding: { version: 1, brand: { name: "Villa A" } },
+      }),
+    );
+    await withTenantContext(tenant.id, (tx) =>
+      updateSiteBranding(tx, {
+        id: siteB.id,
+        branding: { version: 1, brand: { name: "Villa B" } },
+      }),
+    );
+
+    const [a] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, siteA.id)),
+    );
+    const [b] = await withTenantContext(tenant.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, siteB.id)),
+    );
+    expect(resolveSiteBranding(a?.branding).brand.name).toBe("Villa A");
+    expect(resolveSiteBranding(b?.branding).brand.name).toBe("Villa B");
+  });
+
+  it("rejects a non-hex color value", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteBranding(tx, {
+          id: site.id,
+          branding: { version: 1, colors: { primary: "javascript:alert(1)" } },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an override key outside the closed shape", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteBranding(tx, {
+          id: site.id,
+          branding: { version: 1, colors: { wildcard: "#ff0000" } },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an unrecognized font token", async () => {
+    const tenant = await createTenant();
+    const site = await withTenantContext(tenant.id, (tx) =>
+      createSite(tx, { slug: "s", name: "S" }),
+    );
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateSiteBranding(tx, {
+          id: site.id,
+          branding: { version: 1, typography: { heading: "comic-sans" } },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("refuses to change another tenant's site branding", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteB = await withTenantContext(tenantB.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    await expect(
+      withTenantContext(tenantA.id, (tx) =>
+        updateSiteBranding(tx, { id: siteB.id, branding: { version: 1 } }),
+      ),
+    ).rejects.toThrow(SiteNotFoundError);
+  });
+
+  it("RLS itself (not just updateSiteBranding's own WHERE clause) blocks a cross-tenant branding write — bypasses the repository helper entirely", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteB = await withTenantContext(tenantB.id, (tx) =>
+      createSite(tx, { slug: "b", name: "B" }),
+    );
+
+    // A raw Drizzle `.update()` under Tenant A's context, targeting Tenant
+    // B's site by id only — no `tenantId` in the WHERE clause at all. If
+    // RLS weren't the real backstop, this would silently succeed.
+    const affected = await withTenantContext(tenantA.id, (tx) =>
+      tx
+        .update(sites)
+        .set({ branding: { version: 1, brand: { name: "Hijacked" } } })
+        .where(eq(sites.id, siteB.id))
+        .returning(),
+    );
+    expect(affected).toHaveLength(0);
+
+    const [stillB] = await withTenantContext(tenantB.id, (tx) =>
+      tx.select().from(sites).where(eq(sites.id, siteB.id)),
+    );
+    expect(resolveSiteBranding(stillB?.branding).brand.name).toBeUndefined();
   });
 });
 

@@ -120,6 +120,25 @@ over v0.7's functional baseline, with no schema migration. See
 - **A real `sandbox` study**, concluding (same outcome as v0.7, now with actual reasoning) that the attribute stays absent — see the ADR for why.
 - **`packages/renderer`'s and the public runtime's first `"use client"` component**, isolated to exactly the interactive click/timeout/retry surface — all tenant-scoped data resolution stays server-side.
 
+## What Foundation v0.8 adds
+
+The Site Theme, Branding & Design System Kernel — a second, additive
+per-site brand-identity layer next to v0.3's untouched platform `Theme`
+catalog, letting each Site have its own colors, typography, logo/favicon,
+and button/section style, all through closed, validated tokens — never
+arbitrary CSS. See [ADR 0021](adr/0021-site-theme-branding-design-system.md).
+
+- **`SiteBranding`** (`packages/themes/src/branding.ts`) — a versioned (`{version: 1}`), `.strict()`-validated per-site model: brand name/logo/logoDark/favicon (Media references), semantic colors, a closed typography/radius/spacing/button-style/section-style token set. `DEFAULT_SITE_BRANDING` keeps every pre-v0.8 Site rendering unchanged.
+- **Hex-only color validation** (`packages/validation/src/color.ts`) — an allowlist (`#RGB`/`#RRGGBB` only), rejecting `rgb()`/`hsl()`/`var()`/`url()`/named colors/`javascript:`/`data:`/`blob:`/CSS-breakout attempts by construction, not by enumeration.
+- **A closed, web-safe font-stack registry** — 5 fixed `font-family` stacks; no font URL, no `@import`, no `next/font/google` build-time fetch (a deliberate, disclosed limitation — see the ADR).
+- **Logo/favicon via the existing Media system** — UUID-only references, never a raw external URL; a missing/stale reference degrades gracefully at publish time (`resolveBrandMedia`) rather than blocking the publish, deliberately diverging from content-block media's stricter contract ("a logo is chrome, not content").
+- **`sites.branding jsonb`** (migration 0015) — stores only the tenant's override delta, mirroring the existing `theme_overrides` column's own shape; no new table.
+- **Publication snapshot v3** — `branding` is now part of every frozen Revision, resolved and validated in the same `assembleDraft` pass as pages/navigation/media/theme. Historical (pre-v0.8) Revisions still parse, normalized forward with `DEFAULT_SITE_BRANDING`.
+- **`RenderContext.branding`**, resolved identically for Draft Preview and Public through one shared, pure resolution module (`packages/renderer/src/resolve-branding.ts`) — no `isPreview` branch. Emits a closed `--site-*` CSS custom-property set, server-rendered, zero client JS, zero theme flash.
+- **Contrast/accessibility**: a non-blocking WCAG-ratio warning surfaced in the admin Appearance form — a tenant's chosen colors are never silently auto-corrected.
+- **A minimal admin "Appearance" section** on the Site detail page — brand name, colors, typography, radius/spacing, button/section style, logo/favicon picker — reusing the existing `theme.read`/`.update` permissions, no new namespace.
+- **A durable monorepo pattern**: a `@provence360/themes/branding` package-export subpath, so a client component can import pure design-token constants without pulling the database driver into the browser bundle.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -135,6 +154,7 @@ requirements a later phase hasn't settled yet:
 - **A translator UI / per-locale routing.** See [docs/LOCALIZATION.md](LOCALIZATION.md).
 - **The automatic site generator.** Provisioning a new Site (and its Properties/Units/Pages) is a manual admin/seed-script action, not a guided or automated flow.
 - **A platform super-admin.** No way to act across every tenant through the web application — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md).
+- **A drag-and-drop theme builder, custom CSS/JS, a theme marketplace, many pre-built templates, complex animations, a responsive layout editor, or AI-generated/Figma-imported theming.** v0.8 ships a closed, validated token kernel only — see [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 
 ## Known gaps left for the next phase
 
@@ -149,3 +169,5 @@ requirements a later phase hasn't settled yet:
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
 - **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.
 - **VirtualTour provider count: one (Matterport).** The registry is designed for a second provider to be a pure addition (one new `VirtualTourProviderDefinition` + one `register()` call, no other call site changes) — but only Matterport is registered today, matching the brief's own scope.
+- **No real branded webfonts.** `SiteBranding.typography` is a closed, 5-value, web-safe system-font registry — no `next/font/local`/custom font-file upload yet (deliberately deferred rather than risking an unverified build-time network fetch to Google Fonts in this environment). See [ADR 0021](adr/0021-site-theme-branding-design-system.md).
+- **`cta`/`hero`'s button _color_ still comes from the v0.3 `ThemeTokens` system, not `SiteBranding`.** Only those two blocks' button _shape_ (solid/outline/ghost) is `SiteBranding`-driven — a deliberate backward-compatibility boundary, not an oversight. Every future branding-driven component is free of this constraint. See [ADR 0021](adr/0021-site-theme-branding-design-system.md#decision-10--a-deliberate-documented-boundary-between-the-two-layers-on-existing-blocks).

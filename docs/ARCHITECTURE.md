@@ -45,6 +45,15 @@ rather than one giant "core":
 - **`themes`** — the closed design-token catalog + resolution. Depends
   only on `database` (for the platform `themes` table) — the leanest new
   package, since a Theme is pure, small, validated configuration.
+  **v0.8** adds a second, additive module, `branding.ts` (+ `contrast.ts`),
+  next to the untouched v0.3 `Theme` — a per-site, tenant-authored brand
+  identity (colors, typography, logos, buttons, sections), as opposed to
+  `Theme`'s platform-curated, cross-tenant catalog. Exposed via a second
+  `@provence360/themes/branding` package-export subpath so `apps/admin`'s
+  client-side Appearance form can import its closed token constants
+  without pulling `theme-repository.ts` (and therefore `@provence360/database`)
+  into the browser bundle. See
+  [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 - **`renderer`** — the only new package that imports React. Depends on
   `content`, `rentals`, `themes`, `database`, `observability`. This is
   where the two schema-only registries (`content`'s `blockRegistry`,
