@@ -1,6 +1,7 @@
 import type { PropertySummaryProps } from "@provence360/content";
 import { getPropertyGuestView } from "@provence360/rentals";
 import type { BlockRenderer } from "../block-renderer-registry";
+import { resolveSectionStyle } from "../resolve-branding";
 import { DomainReferenceUnavailable } from "./domain-reference-unavailable";
 
 const policyLabels: Record<string, string> = {
@@ -46,12 +47,20 @@ export const propertySummaryRendererV1: BlockRenderer<PropertySummaryProps> = as
   const policyEntries = Object.entries(view.policies).filter(
     ([, value]) => value !== undefined,
   ) as [string, string][];
+  const sectionStyle = resolveSectionStyle(context.branding);
 
   return (
     <section
       key={id}
       data-block="property-summary"
-      style={{ padding: t["spacing.medium"], color: t["color.text"] }}
+      style={{
+        padding: t["spacing.medium"],
+        color: t["color.text"],
+        background: sectionStyle.background,
+        border: sectionStyle.border,
+        borderRadius: t["radius.medium"],
+        boxShadow: sectionStyle.boxShadow,
+      }}
     >
       <h2 style={{ fontFamily: t["font.heading"], marginTop: 0 }}>{view.publicName}</h2>
       {props.showDescription && view.description ? (

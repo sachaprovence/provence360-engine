@@ -11,6 +11,7 @@ import {
   isPublicPropertyStatus,
   isPublicUnitStatus,
 } from "@provence360/rentals";
+import type { SiteBrandingBrand } from "@provence360/themes";
 import {
   getVirtualTour,
   isPublicVirtualTourStatus,
@@ -100,6 +101,49 @@ export async function resolveMediaManifest(
     });
   }
   return { media, issues };
+}
+
+/**
+ * v0.8 — resolves a SiteBranding's `logo`/`logoDark`/`favicon` media
+ * references at publish time, the same tenant-scoped `listMediaAssetsByIds`
+ * lookup `resolveMediaManifest` uses, but with a deliberately different
+ * failure mode: a reference that doesn't resolve (deleted, stale,
+ * cross-tenant) is silently dropped from the frozen `brand` object, never
+ * a publish-blocking issue — a missing logo degrades to text-only
+ * branding, it doesn't stop a tenant from publishing the rest of their
+ * site (docs/adr/0021-site-theme-branding-design-system.md). Contrast with
+ * content-block media, which is content the visitor was promised will be
+ * there; a logo is chrome, and "no logo" is always a safe, renderable
+ * fallback.
+ */
+export async function resolveBrandMedia(
+  tx: AppTx,
+  brand: SiteBrandingBrand,
+): Promise<{ brand: SiteBrandingBrand; media: MediaDescriptor[] }> {
+  const ids = [brand.logo?.mediaId, brand.logoDark?.mediaId, brand.favicon?.mediaId].filter(
+    (id): id is string => id !== undefined,
+  );
+  if (ids.length === 0) return { brand, media: [] };
+
+  const rows = await listMediaAssetsByIds(tx, [...new Set(ids)].sort());
+  const found = new Map(rows.map((row) => [row.id, row]));
+
+  const media: MediaDescriptor[] = [...found.values()].map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    storageKey: row.storageKey,
+    mimeType: row.mimeType,
+    width: row.width,
+    height: row.height,
+    altText: row.altText,
+  }));
+
+  const resolvedBrand: SiteBrandingBrand = { ...brand };
+  if (brand.logo && !found.has(brand.logo.mediaId)) delete resolvedBrand.logo;
+  if (brand.logoDark && !found.has(brand.logoDark.mediaId)) delete resolvedBrand.logoDark;
+  if (brand.favicon && !found.has(brand.favicon.mediaId)) delete resolvedBrand.favicon;
+
+  return { brand: resolvedBrand, media };
 }
 
 type DomainRefCheck = {

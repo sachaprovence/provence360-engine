@@ -68,6 +68,7 @@ export const renderPublishedPage = cache(async (slug: string): Promise<RenderedS
       locale: published.snapshot.site.defaultLocale,
       defaultLocale: published.snapshot.site.defaultLocale,
       tokens: published.snapshot.theme.tokens,
+      branding: published.snapshot.branding,
       media,
       // Every visitor reaching this pipeline is a real public visitor —
       // see `RenderContext.publicOnly`'s own doc comment for what this

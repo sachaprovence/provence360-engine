@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { listMediaAssets } from "@provence360/content";
 import { getDraftSummary } from "@provence360/publishing";
 import { getSite } from "@provence360/sites";
-import { listThemes } from "@provence360/themes";
+import { listThemes, resolveSiteBranding } from "@provence360/themes";
 import { withTenantPage } from "@/lib/actor";
+import { SiteBrandingForm } from "./site-branding-form";
 import { SiteSettingsForm } from "./site-settings-form";
 import { SiteThemeForm } from "./site-theme-form";
 
@@ -19,6 +21,7 @@ export default async function SiteDetailPage({
   const {
     site,
     themeList,
+    mediaList,
     canUpdateSettings,
     canUpdateTheme,
     canReadReleases,
@@ -26,12 +29,15 @@ export default async function SiteDetailPage({
   } = await withTenantPage(tenantId, "site.read", async (tx, actor) => {
     const siteRow = await getSite(tx, siteId);
     const themeRows = await listThemes(tx);
+    const canUpdateThemeNow = actor.permissions.has("theme.update");
+    const mediaRows = canUpdateThemeNow ? await listMediaAssets(tx) : [];
     const canReadReleasesNow = actor.permissions.has("release.read");
     return {
       site: siteRow,
       themeList: themeRows,
+      mediaList: mediaRows,
       canUpdateSettings: actor.permissions.has("site.update"),
-      canUpdateTheme: actor.permissions.has("theme.update"),
+      canUpdateTheme: canUpdateThemeNow,
       canReadReleases: canReadReleasesNow,
       hasUnpublishedChanges:
         siteRow && canReadReleasesNow
@@ -59,6 +65,7 @@ export default async function SiteDetailPage({
       >
         <Link href={`${base}/pages`}>Pages</Link>
         <Link href={`${base}/properties`}>Properties</Link>
+        {canReadReleases ? <Link href={`${base}/preview`}>Preview</Link> : null}
         {canReadReleases ? (
           <Link href={`${base}/publishing`}>
             Publishing
@@ -99,6 +106,24 @@ export default async function SiteDetailPage({
         />
       ) : (
         <p style={{ color: "#6b7280", fontSize: 14 }}>{site.themeId ?? "no theme selected"}</p>
+      )}
+
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Appearance</h2>
+      <p style={{ color: "#6b7280", fontSize: 13, marginBottom: 8 }}>
+        Brand identity, colors, typography, and component style — see{" "}
+        <Link href={`${base}/preview`}>Preview</Link> after saving.
+      </p>
+      {canUpdateTheme ? (
+        <SiteBrandingForm
+          tenantId={tenantId}
+          siteId={siteId}
+          branding={resolveSiteBranding(site.branding)}
+          mediaAssets={mediaList}
+        />
+      ) : (
+        <p style={{ color: "#6b7280", fontSize: 14 }}>
+          {resolveSiteBranding(site.branding).brand.name ?? "default appearance"}
+        </p>
       )}
     </div>
   );

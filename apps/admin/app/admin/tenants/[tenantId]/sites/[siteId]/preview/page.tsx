@@ -1,8 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPageBySlug } from "@provence360/content";
-import { renderBlocks, resolveSiteThemeTokens, type RenderContext } from "@provence360/renderer";
+import {
+  createBrandingCssVariables,
+  renderBlocks,
+  resolveMediaDescriptor,
+  resolveSiteThemeTokens,
+  type RenderContext,
+} from "@provence360/renderer";
 import { getSite } from "@provence360/sites";
+import { resolveSiteBranding } from "@provence360/themes";
 import { withTenantPage } from "@/lib/actor";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +23,11 @@ export const dynamic = "force-dynamic";
  * page goes through, never a bare shareable link or a token (see
  * docs/PUBLISHING.md#preview): a random UUID alone gets you nowhere near
  * this route.
+ *
+ * v0.8 — the same parity applies to branding: `resolveSiteBranding` reads
+ * the Site's live `branding` column (never a frozen snapshot, since this
+ * is a Draft preview), exactly mirroring `resolveSiteThemeTokens`'s own
+ * live-vs-frozen split. See docs/adr/0021-site-theme-branding-design-system.md.
  */
 export default async function PreviewPage({
   params,
@@ -32,6 +44,7 @@ export default async function PreviewPage({
     if (!page) return { site, elements: null };
 
     const tokens = await resolveSiteThemeTokens(tx, site);
+    const branding = resolveSiteBranding(site.branding);
     const context: RenderContext = {
       tx,
       tenantId,
@@ -39,9 +52,13 @@ export default async function PreviewPage({
       locale: site.defaultLocale,
       defaultLocale: site.defaultLocale,
       tokens,
+      branding,
     };
     const elements = await renderBlocks(page.content as unknown[], context);
-    return { site, tokens, elements };
+    const logo = branding.brand.logo
+      ? await resolveMediaDescriptor(branding.brand.logo.mediaId, context)
+      : null;
+    return { site, tokens, branding, logo, elements };
   });
 
   if (!rendered) notFound();
@@ -72,11 +89,28 @@ export default async function PreviewPage({
       {rendered.elements ? (
         <main
           style={{
+            ...(rendered.branding ? createBrandingCssVariables(rendered.branding) : {}),
             background: rendered.tokens?.["color.background"],
             color: rendered.tokens?.["color.text"],
             minHeight: "100vh",
           }}
         >
+          {rendered.logo ? (
+            <div
+              style={{
+                padding: rendered.tokens?.["spacing.medium"],
+                maxWidth: rendered.tokens?.["container.wide"],
+                margin: "0 auto",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- same opaque-storageKey convention as the public runtime's page shell */}
+              <img
+                src={rendered.logo.storageKey}
+                alt={rendered.logo.altText ?? rendered.branding?.brand.name ?? site.name}
+                style={{ height: 40, width: "auto" }}
+              />
+            </div>
+          ) : null}
           <div style={{ maxWidth: rendered.tokens?.["container.wide"], margin: "0 auto" }}>
             {rendered.elements}
           </div>

@@ -673,6 +673,9 @@ importers:
       '@provence360/tenant':
         specifier: workspace:*
         version: link:../tenant
+      '@provence360/validation':
+        specifier: workspace:*
+        version: link:../validation
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(postgres@3.4.9)

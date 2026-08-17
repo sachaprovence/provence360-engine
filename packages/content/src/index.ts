@@ -54,6 +54,7 @@ export {
   createMediaAsset,
   deleteMediaAsset,
   getMediaAsset,
+  listMediaAssets,
   listMediaAssetsByIds,
 } from "./media-repository";
 export type { CreateMediaAssetInput } from "./media-repository";

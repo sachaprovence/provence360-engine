@@ -1,0 +1,1 @@
+ALTER TABLE "sites" ADD COLUMN "branding" jsonb DEFAULT '{}'::jsonb NOT NULL;

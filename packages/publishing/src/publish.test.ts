@@ -12,6 +12,13 @@ import { PublishValidationError } from "./errors";
 import { getPublishedRevision } from "./published-revision";
 import { publishSite } from "./publish";
 
+async function setSiteBranding(siteId: string, branding: unknown) {
+  const { getAdminDb } = await import("@provence360/database/admin");
+  const { sites } = await import("@provence360/database");
+  const { eq } = await import("drizzle-orm");
+  await getAdminDb().update(sites).set({ branding }).where(eq(sites.id, siteId));
+}
+
 beforeAll(async () => {
   await ensureTestDatabaseReady();
 });
@@ -141,5 +148,36 @@ describe("publishSite", () => {
     const nonNull = results.find((r) => r.previousRevisionId !== null);
     const first = results.find((r) => r.previousRevisionId === null);
     expect(nonNull?.previousRevisionId).toBe(first?.revisionId);
+  });
+
+  // v0.8 — Site Theme, Branding & Design System Kernel (section 14/23 of
+  // the brief: "Draft Theme A -> publish rev 10 -> public shows A -> draft
+  // becomes Theme B -> public still shows A -> publish rev 11 -> public
+  // shows B"). Same invariant `editing the draft after publishing does not
+  // change what the public runtime sees` above already proves for page
+  // content, exercised explicitly for branding — see
+  // docs/adr/0021-site-theme-branding-design-system.md.
+  it("Draft branding A -> publish -> public shows A -> draft edited to branding B -> public still shows A -> republish -> public shows B", async () => {
+    const tenant = await createTenant();
+    const site = await seedPublishableSite(tenant.id);
+    await setSiteBranding(site.id, { version: 1, colors: { primary: "#aa0000" } });
+
+    await withTenantContext(tenant.id, (tx) => publishSite(tx, { siteId: site.id }));
+    const afterFirstPublish = await withTenantContext(tenant.id, (tx) =>
+      getPublishedRevision(tx, site.id),
+    );
+    expect(afterFirstPublish?.snapshot.branding.colors.primary).toBe("#aa0000");
+
+    await setSiteBranding(site.id, { version: 1, colors: { primary: "#00bb00" } });
+
+    const stillOld = await withTenantContext(tenant.id, (tx) => getPublishedRevision(tx, site.id));
+    expect(stillOld?.snapshot.branding.colors.primary).toBe("#aa0000");
+
+    await withTenantContext(tenant.id, (tx) => publishSite(tx, { siteId: site.id }));
+    const afterSecondPublish = await withTenantContext(tenant.id, (tx) =>
+      getPublishedRevision(tx, site.id),
+    );
+    expect(afterSecondPublish?.revisionNumber).toBe(2);
+    expect(afterSecondPublish?.snapshot.branding.colors.primary).toBe("#00bb00");
   });
 });

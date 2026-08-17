@@ -58,6 +58,7 @@ interface RenderContext {
   locale: string; // requested display locale
   defaultLocale: string; // the Site's own fallback (see LOCALIZATION.md)
   tokens: ThemeTokens; // already-resolved (base + overrides merged)
+  branding: SiteBrandingV1; // v0.8, already-resolved (default + overrides merged)
   media?: ReadonlyMap<string, FrozenMediaDescriptor>; // v0.5, see below
   publicOnly?: boolean; // v0.6, see below
 }
@@ -83,6 +84,24 @@ one place this branch lives. `packages/renderer` doesn't depend on
 `packages/publishing`; `FrozenMediaDescriptor` is declared locally in
 `render-context.ts`, structurally compatible with (a subset of)
 `packages/publishing`'s `MediaDescriptor`.
+
+**`branding` (v0.8):** the Site's own resolved brand identity — colors,
+typography, logo/favicon references, button/section style — a second,
+additive layer next to `tokens` (see
+[ADR 0021](adr/0021-site-theme-branding-design-system.md)). Resolved
+identically for Draft Preview and Public (from `site.branding` and from
+`snapshot.branding` respectively), through the exact same
+`resolveSiteBranding` call — there is no `isPreview` branch. The page
+shell (`apps/web`'s `[[...slug]]/page.tsx`, `apps/admin`'s Preview page)
+turns it into a closed `--site-*` CSS custom-property set via
+`createBrandingCssVariables`, spread into the root `<main>`'s inline
+`style` alongside the pre-existing `tokens`-driven styling. Two
+pre-existing blocks, `cta.tsx`/`hero.tsx`, deliberately keep drawing their
+button _color_ from `tokens` (not `branding`) for backward compatibility
+with Sites that set a `theme_overrides.color.primary` before v0.8 existed
+— `branding.buttons.*.style` only controls those two blocks' button
+_shape_ (solid/outline/ghost). See ADR 0021, Decision 10, for the full
+reasoning and the regression this boundary fixes.
 
 **`publicOnly` (v0.6):** the direct sibling of `media` above, for Rental
 _business_ data rather than frozen presentation. `true` only on
@@ -178,6 +197,15 @@ already-published Revision — see [ADR 0019](adr/0019-virtual-tour-immersive-ke
   plain JSX children — React escapes it by default. There is no rich-text
   block in v0.3; if one is added later, its content must be structured and
   sanitized, never raw HTML passed through unchanged.
+- **v0.8 branding is a closed token set, not a CSS surface.** Colors are
+  hex-only (`packages/validation/src/color.ts`'s `hexColorSchema`, an
+  allowlist rejecting `rgb()`/`var()`/`url()`/named colors/`javascript:`/
+  `data:`/`blob:`/`</style>`-breakout attempts), fonts are a closed
+  web-safe stack registry (never a font URL), and logo/favicon are
+  UUID-only references into the existing Media system (never a raw
+  external URL). Every resolved value flows into a plain React `style`
+  object — never a `<style>` tag, never `dangerouslySetInnerHTML`. See
+  [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 - **No arbitrary CSS, no arbitrary iframes.** Styling comes exclusively
   from `RenderContext.tokens` (see [docs/THEMES.md](THEMES.md)); there is
   no block prop, anywhere, typed to hold a `<style>` block or an inline

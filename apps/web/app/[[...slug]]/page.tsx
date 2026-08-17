@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { renderNavigation } from "@provence360/renderer";
+import { createBrandingCssVariables, renderNavigation } from "@provence360/renderer";
 import { renderPublishedPage } from "@/lib/site-page";
 
 // Optional catch-all: matches `/` (slug undefined) as well as `/about`,
@@ -24,28 +24,58 @@ export default async function SitePage({ params }: SitePageProps) {
 
   const { snapshot, elements } = rendered;
   const tokens = snapshot.theme.tokens;
+  const branding = snapshot.branding;
   const nav = renderNavigation(snapshot.site.navigation, {
     locale: snapshot.site.defaultLocale,
     defaultLocale: snapshot.site.defaultLocale,
     tokens,
   });
 
+  // v0.8 — the closed --site-* custom property set (see
+  // docs/adr/0021-site-theme-branding-design-system.md), computed once,
+  // server-side, from the Revision's own frozen branding. Applied
+  // additively alongside the existing v0.3 token-driven inline styles
+  // below (which every block renderer already consumes via
+  // `context.tokens`) — a future premium component can consume
+  // `var(--site-color-primary)` directly without any block that already
+  // works today needing to change.
+  const brandingVars = createBrandingCssVariables(branding);
+  const logo = branding.brand.logo
+    ? snapshot.media?.find((descriptor) => descriptor.id === branding.brand.logo?.mediaId)
+    : undefined;
+
   return (
     <main
       style={{
+        ...brandingVars,
         background: tokens["color.background"],
         color: tokens["color.text"],
         minHeight: "100vh",
       }}
     >
-      {nav ? (
+      {nav || logo ? (
         <header
           style={{
+            display: "flex",
+            alignItems: "center",
+            gap: tokens["spacing.medium"],
             padding: tokens["spacing.medium"],
             maxWidth: tokens["container.wide"],
             margin: "0 auto",
           }}
         >
+          {logo ? (
+            // `logo.storageKey` is a frozen, tenant-scoped opaque
+            // reference, not a Next.js-optimizable static asset path — the
+            // same convention `gallery.tsx`'s own image rendering already
+            // follows.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logo.storageKey}
+              alt={logo.altText ?? branding.brand.name ?? snapshot.site.name}
+              style={{ height: 40, width: "auto" }}
+            />
+          ) : null}
           {nav}
         </header>
       ) : null}
@@ -83,6 +113,14 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
   const ogImage = seo.ogImageMediaId
     ? snapshot.media?.find((descriptor) => descriptor.id === seo.ogImageMediaId)
     : undefined;
+  // v0.8 — the Revision's own frozen favicon reference, resolved the same
+  // way `ogImage` already is (a lookup into the frozen media manifest, no
+  // live tenant-scoped query at request time).
+  const favicon = snapshot.branding.brand.favicon
+    ? snapshot.media?.find(
+        (descriptor) => descriptor.id === snapshot.branding.brand.favicon?.mediaId,
+      )
+    : undefined;
 
   return {
     title,
@@ -93,5 +131,6 @@ export async function generateMetadata({ params }: SitePageProps): Promise<Metad
       follow: seo.noFollow !== true,
     },
     ...(ogImage ? { openGraph: { images: [ogImage.storageKey] } } : {}),
+    ...(favicon ? { icons: { icon: favicon.storageKey } } : {}),
   };
 }

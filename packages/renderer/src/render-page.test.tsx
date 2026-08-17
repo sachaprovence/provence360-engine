@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AppTx } from "@provence360/database";
 import { generateBlockInstanceId } from "@provence360/content";
-import { resolveTheme } from "@provence360/themes";
+import { DEFAULT_SITE_BRANDING, resolveTheme } from "@provence360/themes";
 import {
   attachPropertyAmenity,
   attachUnitAmenity,
@@ -42,6 +42,7 @@ function contextFor(tenantId: string, siteId: string, tx: AppTx): RenderContext 
     locale: "fr",
     defaultLocale: "fr",
     tokens: OVERRIDE_TOKENS,
+    branding: DEFAULT_SITE_BRANDING,
   };
 }
 

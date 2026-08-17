@@ -1,9 +1,14 @@
 import type { CtaProps } from "@provence360/content";
 import { resolveLocalizedString } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
+import { resolveButtonStyle } from "../resolve-branding";
 
 export const ctaRendererV1: BlockRenderer<CtaProps> = ({ id, props, context }) => {
   const t = context.tokens;
+  const buttonStyle = resolveButtonStyle(
+    { base: t["color.primary"], foreground: t["color.primaryContrast"] },
+    context.branding.buttons.primary.style,
+  );
   const heading = props.heading
     ? resolveLocalizedString(props.heading, context.locale, context.defaultLocale)
     : undefined;
@@ -35,8 +40,9 @@ export const ctaRendererV1: BlockRenderer<CtaProps> = ({ id, props, context }) =
         style={{
           display: "inline-block",
           padding: `${t["spacing.small"]} ${t["spacing.medium"]}`,
-          background: t["color.primary"],
-          color: t["color.primaryContrast"],
+          background: buttonStyle.background,
+          color: buttonStyle.color,
+          border: buttonStyle.border,
           borderRadius: t["radius.small"],
           textDecoration: "none",
         }}

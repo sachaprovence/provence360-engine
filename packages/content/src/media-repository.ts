@@ -52,6 +52,20 @@ export async function getMediaAsset(tx: AppTx, id: string) {
 }
 
 /**
+ * Lists every MediaAsset belonging to the current tenant — used by the
+ * v0.8 admin Branding form's logo/favicon picker (a plain `<select>`, not
+ * a media library; see docs/adr/0021-site-theme-branding-design-system.md).
+ * No pagination: this codebase has no bulk media-upload pipeline yet
+ * (see docs/SECURITY.md's known gaps), so a tenant's media count stays
+ * small in practice — the same scale assumption `listThemes`/`listSites`
+ * already make.
+ */
+export async function listMediaAssets(tx: AppTx) {
+  const tenantId = requireCurrentTenantId();
+  return tx.select().from(mediaAssets).where(eq(mediaAssets.tenantId, tenantId));
+}
+
+/**
  * Resolves a set of MediaAsset ids to the current tenant's rows only — a
  * stale or cross-tenant id (e.g. a block referencing another tenant's
  * media, whether by data corruption or a forged mutation) simply resolves

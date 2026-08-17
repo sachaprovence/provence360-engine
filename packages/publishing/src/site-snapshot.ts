@@ -2,7 +2,12 @@ import { z } from "zod";
 import { mediaKindValues, pageTypeValues } from "@provence360/database";
 import { blockEnvelopeSchema, localizedStringSchema, seoSchema } from "@provence360/content";
 import { safeHrefSchema, uuidSchema } from "@provence360/validation";
-import { themeTokensSchema } from "@provence360/themes";
+import {
+  DEFAULT_SITE_BRANDING,
+  siteBrandingV1Schema,
+  themeTokensSchema,
+  type SiteBrandingV1,
+} from "@provence360/themes";
 
 // The Site Composition Contract (v0.5, sections 4/7 of the brief): the
 // real, runtime-validated shape of what a `site_revisions.snapshot` JSONB
@@ -17,7 +22,10 @@ import { themeTokensSchema } from "@provence360/themes";
 // the renderer.
 
 /** Bumped whenever the *shape* `assembleDraft` freezes into a new Revision changes incompatibly. */
-export const SNAPSHOT_SCHEMA_VERSION = 2 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 3 as const;
+
+/** The immediately-prior schema version — still readable (see `parseSiteSnapshot`'s v2 branch), never writable. */
+const PREVIOUS_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 
 // --- Media -------------------------------------------------------------
 //
@@ -124,18 +132,34 @@ export const siteSnapshotThemeSchema = z.object({
 
 /**
  * `media` is a frozen manifest — every `MediaDescriptor` any block/SEO
- * field in `pages` references, deduplicated, ordered by `id` (determinism
- * — section 14 of the brief). Always present (possibly empty) on a Revision
- * created by v0.5's `assembleDraft`; `undefined` is reserved for a
- * *normalized legacy* (pre-v0.5) snapshot that never had one at all — see
+ * field in `pages` (and, v0.8, `branding.brand.logo`/`logoDark`/`favicon`)
+ * references, deduplicated, ordered by `id` (determinism — section 14 of
+ * the brief). Always present (possibly empty) on a Revision created by
+ * v0.5+'s `assembleDraft`; `undefined` is reserved for a *normalized
+ * legacy* (pre-v0.5) snapshot that never had one at all — see
  * `parseSiteSnapshot`'s legacy branch and `docs/PUBLISHING.md`'s "Media"
  * section for why that distinction (not just "always an array") matters
  * for how the renderer treats each case differently.
  */
-export const siteSnapshotV2Schema = z.object({
+const siteSnapshotV2Schema = z.object({
+  schemaVersion: z.literal(PREVIOUS_SNAPSHOT_SCHEMA_VERSION),
+  site: siteSnapshotSiteSchema,
+  theme: siteSnapshotThemeSchema,
+  pages: z.array(siteSnapshotPageSchema),
+  media: z.array(mediaDescriptorSchema),
+});
+
+/**
+ * v0.8 — adds `branding`, the resolved (`DEFAULT_SITE_BRANDING` + Site's
+ * own overrides) `SiteBrandingV1`, frozen the same way `theme.tokens`
+ * already is — see docs/adr/0021-site-theme-branding-design-system.md.
+ * Everything else is byte-for-byte the v2 shape.
+ */
+export const siteSnapshotV3Schema = z.object({
   schemaVersion: z.literal(SNAPSHOT_SCHEMA_VERSION),
   site: siteSnapshotSiteSchema,
   theme: siteSnapshotThemeSchema,
+  branding: siteBrandingV1Schema,
   pages: z.array(siteSnapshotPageSchema),
   media: z.array(mediaDescriptorSchema),
 });
@@ -144,8 +168,10 @@ export interface SiteSnapshot {
   schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
   site: z.infer<typeof siteSnapshotSiteSchema>;
   theme: z.infer<typeof siteSnapshotThemeSchema>;
+  /** Always present after normalization — a pre-v0.8 Revision is upgraded to {@link DEFAULT_SITE_BRANDING} at read time (see `parseSiteSnapshot`), never left absent. */
+  branding: SiteBrandingV1;
   pages: SiteSnapshotPage[];
-  /** `undefined` only for a normalized legacy (pre-v0.5) Revision — see the field comment on {@link siteSnapshotV2Schema}. */
+  /** `undefined` only for a normalized legacy (pre-v0.5) Revision — see the field comment on {@link siteSnapshotV3Schema}. */
   media?: MediaDescriptor[];
 }
 
@@ -198,7 +224,32 @@ function normalizeLegacySnapshot(legacy: z.infer<typeof legacySiteSnapshotSchema
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     site: { ...legacy.site, navigation: EMPTY_RESOLVED_NAVIGATION },
     theme: legacy.theme,
+    // v0.8 — a legacy (pre-v0.5) Revision predates `sites.branding` too;
+    // the same "upgrade to the current default, never a data loss" posture
+    // as `normalizeV2Snapshot` below, just one version further back.
+    branding: DEFAULT_SITE_BRANDING,
     pages: legacy.pages,
+  };
+}
+
+/**
+ * v0.8 — upgrades an already-structurally-valid v2 (pre-branding)
+ * Revision to the current runtime shape by adding
+ * {@link DEFAULT_SITE_BRANDING}: this is the section 12/backward-
+ * compatibility guarantee applied to an already-*published* Revision, not
+ * just a fresh Draft — a Site published under v0.7.1 or earlier had no
+ * concept of branding at all, so its frozen appearance now includes the
+ * one official default rather than an absent/undefined field the renderer
+ * would otherwise have to special-case.
+ */
+function normalizeV2Snapshot(v2: z.infer<typeof siteSnapshotV2Schema>): SiteSnapshot {
+  return {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    site: v2.site,
+    theme: v2.theme,
+    branding: DEFAULT_SITE_BRANDING,
+    pages: v2.pages,
+    media: v2.media,
   };
 }
 
@@ -242,11 +293,19 @@ export function parseSiteSnapshot(raw: unknown): SiteSnapshot {
     return normalizeLegacySnapshot(legacy.data);
   }
 
+  if (schemaVersion === PREVIOUS_SNAPSHOT_SCHEMA_VERSION) {
+    const parsedV2 = siteSnapshotV2Schema.safeParse(raw);
+    if (!parsedV2.success) {
+      throw new InvalidSnapshotError(parsedV2.error.issues[0]?.message ?? "unknown error");
+    }
+    return normalizeV2Snapshot(parsedV2.data);
+  }
+
   if (schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     throw new UnknownSnapshotVersionError(schemaVersion);
   }
 
-  const parsed = siteSnapshotV2Schema.safeParse(raw);
+  const parsed = siteSnapshotV3Schema.safeParse(raw);
   if (!parsed.success) {
     throw new InvalidSnapshotError(parsed.error.issues[0]?.message ?? "unknown error");
   }
