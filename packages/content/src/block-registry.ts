@@ -12,8 +12,8 @@ import type { z } from "zod";
  */
 export interface BlockReference {
   kind: "media" | "domain";
-  /** Only meaningful when `kind === "domain"` — which Rental entity this reference targets. */
-  domainType?: "property" | "unit";
+  /** Only meaningful when `kind === "domain"` — which domain entity this reference targets. `"virtualTour"` (v0.7) points at a `@provence360/virtual-tours` row rather than a Rental entity, but is validated/resolved through this exact same generic mechanism — never a parallel one. */
+  domainType?: "property" | "unit" | "virtualTour";
   id: string;
 }
 

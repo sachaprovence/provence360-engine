@@ -87,6 +87,25 @@ See [ADR 0018](adr/0018-rental-domain-guest-experience.md).
 - **All three touched content blocks stay on `@1`** — every new prop is optional and defaulted-false; an already-stored instance keeps rendering exactly as before. `amenities@1` widens to accept `propertyId` as an alternative to `unitId` without breaking any stored instance.
 - **A minimal but real admin UI** — Property/Unit edit forms now expose every field the domain model has (including several pre-existing ones — `internalName`, full address, lat/lng, timezone, `beds`/`bathrooms`/`size` — that had zero UI before v0.6), plus Property-level amenity selection and sleeping-arrangement add/remove.
 
+## What Foundation v0.7 adds
+
+The Virtual Tour & Immersive Experience Kernel — a first-class,
+provider-agnostic `VirtualTour` domain entity (Matterport as the first
+registered provider), embeddable via the existing generic block-reference
+mechanism, with the Presentation-Frozen/Business-Live boundary and
+composite-FK ownership guarantees v0.6 established extended to it
+unchanged. See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md).
+
+- **`virtual_tours`** — tied to a Property (always) and optionally a Unit, Postgres-enforced (a Unit belonging to a different Property is rejected at `INSERT`/`UPDATE`, not merely application-checked), same `draft`/`active`/`archived` lifecycle shape as Property/Unit.
+- **A closed VirtualTour provider registry** (`packages/virtual-tours`) — every provider-specific concern (URL construction, input normalization, CSP frame origins) lives behind one shape; no `provider === "matterport"` branch anywhere else in the codebase, and no "generic iframe provider" a caller could ever register.
+- **A Matterport adapter**, verified against Matterport's own current official documentation (not training-data memory) — accepts a share URL or bare Model SID, rejects everything else (wrong host, lookalike domains, non-`https` schemes including `javascript:`/`data:`/`blob:`, malformed ids).
+- **`virtual-tour@1`** — a domain-bound content block reusing the exact same generic `BlockDefinition.references` mechanism v0.5 introduced; no parallel reference system.
+- **Publish-time validation gains `domain_reference_invalid`** — a third failure mode alongside `domain_reference_missing`/`domain_reference_not_active`, for a VirtualTour row whose provider/asset-id no longer validates against the live registry.
+- **A CSP `frame-src` policy** on both `apps/web` and `apps/admin`, restricted to exactly the registered providers' own origins (no wildcards), kept in sync with the provider registry by a dedicated test rather than by hand-auditing two files.
+- **New permissions** — `tour.read`/`.create`/`.update`/`.delete`, their own namespace rather than reusing `media.*`.
+- **A minimal admin CRUD surface** on the Property page — create/list/change-status/remove, with a live status `<select>` (not a form submit) demonstrating that archiving a Tour removes it from the public site immediately.
+- **No Matterport SDK, API key, OAuth, GraphQL client, or webhook integration anywhere** — the entire feature is deterministic, first-party-constructed URL building from an admin-supplied identifier.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -113,5 +132,6 @@ requirements a later phase hasn't settled yet:
 - **A platform super-admin.** Deliberately undesigned so far — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md) for why it needs its own identity concept rather than an extension of `MembershipRole`.
 - **No component/block-level theme variants.** Only the token layer ships in v0.3 — see [docs/THEMES.md](THEMES.md).
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
-- **No Virtual Tours abstraction.** Audited explicitly for v0.6 (section 19 of that brief) — no existing 360°/Matterport-style abstraction anywhere in this codebase to extend; deliberately deferred rather than speculatively built. See [ADR 0018](adr/0018-rental-domain-guest-experience.md#decision-10--virtual-tours-audited-deliberately-deferred).
 - **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.
+- **No click-to-load for VirtualTour embeds.** v0.7 delivered `posterMediaId` (a poster image reference) specifically so a future click-to-load implementation needs no schema change, but the iframe itself always mounts on render today — deliberately deferred, see [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-10--deliberate-non-decisions).
+- **VirtualTour provider count: one (Matterport).** The registry is designed for a second provider to be a pure addition (one new `VirtualTourProviderDefinition` + one `register()` call, no other call site changes) — but only Matterport is registered today, matching the brief's own scope.

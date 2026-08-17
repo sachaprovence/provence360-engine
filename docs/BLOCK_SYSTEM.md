@@ -67,18 +67,19 @@ checked.
 all-or-nothing — used on the write path (see
 [docs/CONTENT_MODEL.md](CONTENT_MODEL.md)).
 
-## The 8 built-in blocks
+## The 9 built-in blocks
 
-| Type                 | Domain-bound? | Purpose                                                               |
-| -------------------- | ------------- | --------------------------------------------------------------------- |
-| `hero@1`             | no            | Headline, subheadline, optional background `MediaAsset`, optional CTA |
-| `text@1`             | no            | Heading + plain-text body (paragraphs split on `\n`)                  |
-| `gallery@1`          | no            | An ordered list of `MediaAsset` references + caption                  |
-| `feature-list@1`     | no            | Heading + a list of icon/title/description items                      |
-| `cta@1`              | no            | Heading/body + one button (label + safe href)                         |
-| `property-summary@1` | **yes**       | References one `Property`                                             |
-| `unit-grid@1`        | **yes**       | References one `Property`'s `Unit`s (optionally a subset/order)       |
-| `amenities@1`        | **yes**       | References one `Unit`'s attached catalog Amenities                    |
+| Type                 | Domain-bound? | Purpose                                                                                            |
+| -------------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| `hero@1`             | no            | Headline, subheadline, optional background `MediaAsset`, optional CTA                              |
+| `text@1`             | no            | Heading + plain-text body (paragraphs split on `\n`)                                               |
+| `gallery@1`          | no            | An ordered list of `MediaAsset` references + caption                                               |
+| `feature-list@1`     | no            | Heading + a list of icon/title/description items                                                   |
+| `cta@1`              | no            | Heading/body + one button (label + safe href)                                                      |
+| `property-summary@1` | **yes**       | References one `Property`                                                                          |
+| `unit-grid@1`        | **yes**       | References one `Property`'s `Unit`s (optionally a subset/order)                                    |
+| `amenities@1`        | **yes**       | References one `Unit`'s attached catalog Amenities                                                 |
+| `virtual-tour@1`     | **yes**       | References one `VirtualTour` (a Matterport-style 360° embed), plus an optional poster `MediaAsset` |
 
 ## Content blocks vs. domain blocks
 
@@ -96,6 +97,13 @@ This is enforced by convention (the schema for `unit-grid@1`, for example,
 is literally `{ propertyId, unitIds?, columns }` — there's no field to put
 a unit's name in even if a caller wanted to), and verified directly by a
 Block Registry test asserting `capabilities.domainBound` per type.
+
+**v0.7 update:** `virtual-tour@1` follows the exact same rule for a new
+`domainType`, `"virtualTour"` — its `props` hold only `tourId` + display
+options (`showTitle`, `aspectRatio`, `posterMediaId`), never a copy of the
+VirtualTour's `provider`/`providerAssetId`/`publicName`. See
+[ADR 0019](adr/0019-virtual-tour-immersive-kernel.md) and
+[docs/SITE_DOMAIN.md#virtualtour-v07](SITE_DOMAIN.md#virtualtour-v07).
 
 ## Versioning: closed, additive, never destructive
 

@@ -7,6 +7,7 @@ const mediaId2 = "01a00000-0000-7000-8000-0000000000a2";
 const propertyId = "01a00000-0000-7000-8000-0000000000b1";
 const unitId1 = "01a00000-0000-7000-8000-0000000000c1";
 const unitId2 = "01a00000-0000-7000-8000-0000000000c2";
+const tourId = "01a00000-0000-7000-8000-0000000000d1";
 
 describe("extractBlockReferences", () => {
   it("hero: extracts its backgroundMediaId as a media reference, none when absent", () => {
@@ -87,6 +88,31 @@ describe("extractBlockReferences", () => {
     });
     expect(extractBlockReferences(block)).toEqual([
       { kind: "domain", domainType: "property", id: propertyId },
+    ]);
+  });
+
+  it("virtual-tour: extracts a domain reference to its tourId, none for posterMediaId when absent", () => {
+    const block = parseBlockInstance({
+      id: "b10",
+      type: "virtual-tour",
+      version: 1,
+      props: { tourId },
+    });
+    expect(extractBlockReferences(block)).toEqual([
+      { kind: "domain", domainType: "virtualTour", id: tourId },
+    ]);
+  });
+
+  it("virtual-tour: extracts both the domain reference and a media reference for posterMediaId when present", () => {
+    const block = parseBlockInstance({
+      id: "b11",
+      type: "virtual-tour",
+      version: 1,
+      props: { tourId, posterMediaId: mediaId },
+    });
+    expect(extractBlockReferences(block)).toEqual([
+      { kind: "domain", domainType: "virtualTour", id: tourId },
+      { kind: "media", id: mediaId },
     ]);
   });
 

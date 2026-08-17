@@ -92,6 +92,20 @@
       "when": 1786951100000,
       "tag": "0012_v06_rental_guest_experience_role_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786956322148,
+      "tag": "0013_virtual_tour_immersive_kernel",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786956400000,
+      "tag": "0014_v07_virtual_tour_role_grants",
+      "breakpoints": true
     }
   ]
 }

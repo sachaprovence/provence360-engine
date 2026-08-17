@@ -13,12 +13,13 @@ import {
   createSleepingArrangement,
   createTenant,
   createUnit,
+  createVirtualTour,
   ensureTestDatabaseReady,
   resetDatabase,
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
 import { getAdminDb } from "@provence360/database/admin";
-import { mediaAssets, properties } from "@provence360/database";
+import { mediaAssets, properties, virtualTours } from "@provence360/database";
 import { eq } from "drizzle-orm";
 import { renderBlocks } from "./index";
 import type { FrozenMediaDescriptor, RenderContext } from "./render-context";
@@ -523,5 +524,260 @@ describe("v0.6 — public vs preview Rental visibility (RenderContext.publicOnly
     expect(html).toContain("Secret Retreat");
     expect(html).not.toContain("Rue Confidentielle");
     expect(html).not.toContain("Cassis");
+  });
+});
+
+describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
+  it("renders the resolved, first-party-constructed Matterport embed src, never a stored HTML/iframe string", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Villa Panoramique",
+      providerAssetId: "abc12345678",
+      status: "active",
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("Villa Panoramique");
+    expect(html).toContain("https://my.matterport.com/show/?m=abc12345678");
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('allow="xr-spatial-tracking"');
+  });
+
+  it("hides a draft Tour publicly but shows it in preview (RenderContext.publicOnly)", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Tour En Preparation",
+      status: "draft",
+    });
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id },
+      },
+    ];
+
+    const previewHtml = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(previewHtml).toContain("Tour En Preparation");
+
+    const publicHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(publicHtml).not.toContain("Tour En Preparation");
+    expect(publicHtml).toContain('data-block-unavailable="true"');
+  });
+
+  it("an archived Tour disappears from public rendering immediately, without requiring a republish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Tour Bientot Retiree",
+      status: "active",
+    });
+    // This exact object simulates a Revision's frozen block config — it is
+    // never mutated between the two renders below.
+    const frozenBlockConfig = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id },
+      },
+    ];
+
+    const beforeHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(frozenBlockConfig, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(beforeHtml).toContain("Tour Bientot Retiree");
+
+    await getAdminDb()
+      .update(virtualTours)
+      .set({ status: "archived" })
+      .where(eq(virtualTours.id, tour.id));
+
+    const afterHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      // The exact same, unmodified block config object — proving the
+      // Revision's *presentation* never had to change for this to happen.
+      const elements = await renderBlocks(frozenBlockConfig, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(afterHtml).not.toContain("Tour Bientot Retiree");
+    expect(afterHtml).toContain('data-block-unavailable="true"');
+  });
+
+  it("Presentation-Frozen / Business-Live boundary: an admin repointing the Tour's target asset after publish reflects immediately, without a republish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      providerAssetId: "original111",
+      status: "active",
+    });
+    const frozenBlockConfig = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id },
+      },
+    ];
+
+    const beforeHtml = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(frozenBlockConfig, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(beforeHtml).toContain("original111");
+
+    await getAdminDb()
+      .update(virtualTours)
+      .set({ providerAssetId: "repointed11" })
+      .where(eq(virtualTours.id, tour.id));
+
+    const afterHtml = await withTenantContext(tenant.id, async (tx) => {
+      // Same unmodified block config — the VirtualTour row is read live,
+      // never from any frozen manifest, unlike Hero/Gallery's media.
+      const elements = await renderBlocks(frozenBlockConfig, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(afterHtml).toContain("repointed11");
+    expect(afterHtml).not.toContain("original111");
+  });
+
+  it("a VirtualTour block referencing another tenant's Tour never leaks that tenant's data", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteA = await createSite({ tenantId: tenantA.id, slug: "a", name: "A" });
+    const siteB = await createSite({ tenantId: tenantB.id, slug: "b", name: "B" });
+    const propertyB = await createProperty({ tenantId: tenantB.id, siteId: siteB.id });
+    const tourB = await createVirtualTour({
+      tenantId: tenantB.id,
+      propertyId: propertyB.id,
+      publicName: "Tenant B Secret Tour",
+      status: "active",
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tourB.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenantA.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenantA.id, siteA.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).not.toContain("Tenant B Secret Tour");
+    expect(html).toContain('data-block-unavailable="true"');
+  });
+
+  it("posterMediaId resolves through the same frozen-manifest/live-lookup split as Hero/Gallery", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "active",
+    });
+    const asset = await createMediaAsset({ tenantId: tenant.id, storageKey: "live/poster.jpg" });
+    const frozen: FrozenMediaDescriptor = {
+      id: asset.id,
+      storageKey: "frozen/poster-at-publish.jpg",
+      mimeType: "image/jpeg",
+      width: null,
+      height: null,
+      altText: null,
+    };
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id, posterMediaId: asset.id },
+      },
+    ];
+
+    const frozenHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = {
+        ...contextFor(tenant.id, site.id, tx),
+        media: new Map([[asset.id, frozen]]),
+      };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(frozenHtml).toContain("frozen/poster-at-publish.jpg");
+
+    const liveHtml = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(liveHtml).toContain("live/poster.jpg");
+  });
+
+  it("showTitle: false omits the Tour's publicName from the rendered heading", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Tour Sans Titre Visible",
+      status: "active",
+    });
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: tour.id, showTitle: false },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).not.toContain("<h2");
   });
 });

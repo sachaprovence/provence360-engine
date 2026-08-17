@@ -58,6 +58,17 @@ export const PERMISSIONS = [
   "media.read",
   "media.create",
   "media.delete",
+
+  // v0.7 — Virtual Tour & Immersive Experience Kernel (see
+  // docs/adr/0019-virtual-tour-immersive-kernel.md). Deliberately its own
+  // namespace, not folded into `media.*`: a VirtualTour is a domain entity
+  // with its own ownership/publish-reference semantics (like Property/
+  // Unit), not a MediaAsset — reusing `media.*` here would conflate two
+  // unrelated permission surfaces.
+  "tour.read",
+  "tour.create",
+  "tour.update",
+  "tour.delete",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -102,6 +113,10 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   "media.read",
   "media.create",
   "media.delete",
+  "tour.read",
+  "tour.create",
+  "tour.update",
+  "tour.delete",
   // Deliberately absent: tenant.update, billing.*. Deliberately absent in
   // *effect* rather than by permission (member.update/member.remove are
   // granted): the owner invariant in membership-repository.ts additionally
@@ -120,6 +135,7 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
   "page.read",
   "theme.read",
   "media.read",
+  "tour.read",
   // Deliberately absent: audit.read — the audit trail is treated as an
   // administrative surface, not "basic reading," in this codebase.
 ];

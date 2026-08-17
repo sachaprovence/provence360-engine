@@ -1,5 +1,5 @@
 {
-  "name": "@provence360/renderer",
+  "name": "@provence360/virtual-tours",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,24 +14,18 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@provence360/content": "workspace:*",
     "@provence360/database": "workspace:*",
     "@provence360/observability": "workspace:*",
-    "@provence360/rentals": "workspace:*",
-    "@provence360/themes": "workspace:*",
-    "@provence360/virtual-tours": "workspace:*",
-    "react": "19.2.8"
+    "@provence360/tenant": "workspace:*",
+    "@provence360/validation": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@provence360/config": "workspace:*",
-    "@provence360/tenant": "workspace:*",
     "@provence360/testkit": "workspace:*",
     "@types/node": "22.20.1",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
-    "drizzle-orm": "0.45.2",
     "eslint": "9.39.5",
-    "react-dom": "19.2.8",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

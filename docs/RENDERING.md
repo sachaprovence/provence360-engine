@@ -164,6 +164,13 @@ This is exercised directly by an adversarial renderer test
 (`render-page.test.tsx`): Tenant A's block referencing Tenant B's real
 Property renders the placeholder, never Tenant B's actual name/address.
 
+**v0.7:** `virtual-tour@1` follows this exact contract for a `tourId`
+that resolves to nothing — deleted, cross-tenant, or (the new case) not
+currently `active` under `RenderContext.publicOnly`. Same placeholder,
+same non-echoing behavior. Unlike Property/Unit's frozen-vs-live media
+distinction, the VirtualTour row itself is always read live, even under an
+already-published Revision — see [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-6--presentation-frozenbusiness-live-identically-to-propertyunit).
+
 ## Security
 
 - **No `dangerouslySetInnerHTML` anywhere in `packages/renderer`.** Text
@@ -173,9 +180,16 @@ Property renders the placeholder, never Tenant B's actual name/address.
   sanitized, never raw HTML passed through unchanged.
 - **No arbitrary CSS, no arbitrary iframes.** Styling comes exclusively
   from `RenderContext.tokens` (see [docs/THEMES.md](THEMES.md)); there is
-  no block prop, anywhere, typed to hold a `<style>` block, an inline
-  `style` string a tenant controls beyond the closed token set, or an
-  iframe `src`.
+  no block prop, anywhere, typed to hold a `<style>` block or an inline
+  `style` string a tenant controls beyond the closed token set.
+  **"No arbitrary iframes" ≠ "no iframes"** — `virtual-tour@1` (v0.7)
+  does render one, but its `src` is never a tenant-supplied string: it's
+  `buildSafeVirtualTourEmbed(tour).src`, deterministically constructed by
+  a closed, first-party `VirtualTourProviderDefinition` (`@provence360/virtual-tours`)
+  from an already-normalized provider asset id — there is no code path
+  from "text an admin typed" to "iframe `src`" that skips normalization.
+  See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md) and
+  [docs/SECURITY.md#virtualtour-embeds-v07](SECURITY.md#virtualtour-embeds-v07).
 - **Every href is validated at write time**, not just escaped at render
   time. `packages/validation/src/safe-url.ts`'s `safeHrefSchema` — used by
   every block with a link (`hero.ctaHref`, `cta.buttonHref`) — is a closed

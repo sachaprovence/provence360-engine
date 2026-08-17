@@ -17,6 +17,7 @@ import {
   units,
   unitSleepingArrangements,
   users,
+  virtualTours,
   type AmenityCategory,
   type BedType,
   type LocationDisclosure,
@@ -33,6 +34,8 @@ import {
   type ThemeStatus,
   type UnitSizeUnit,
   type UnitStatus,
+  type VirtualTourProvider,
+  type VirtualTourStatus,
 } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
 
@@ -311,6 +314,51 @@ export async function createSleepingArrangement(input: {
     })
     .returning();
   if (!row) throw new Error("Failed to create test sleeping arrangement");
+  return row;
+}
+
+/**
+ * Inserts a `virtual_tours` row directly via the admin connection, bypassing
+ * `@provence360/virtual-tours`' own `createVirtualTour` (which normalizes
+ * `rawProviderInput` through the provider registry and enforces ownership
+ * checks under `withTenantContext()`). Use this — same as every other
+ * factory here — to arrange fixtures for tests that exercise some *other*
+ * package (a `virtual-tour@1` block reference, a publish-validation check,
+ * a renderer, an RLS isolation test); use the real package function instead
+ * when the test is actually about normalization/ownership/optimistic
+ * concurrency.
+ */
+export async function createVirtualTour(input: {
+  tenantId: string;
+  propertyId: string;
+  unitId?: string;
+  provider?: VirtualTourProvider;
+  providerAssetId?: string;
+  internalName?: string;
+  publicName?: string;
+  status?: VirtualTourStatus;
+  ordering?: number;
+}) {
+  const db = getAdminDb();
+  const [row] = await db
+    .insert(virtualTours)
+    .values({
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      unitId: input.unitId,
+      provider: input.provider ?? "matterport",
+      // `shortId()` is 8 hex chars; prefixed to 11 total — a valid-shaped
+      // Matterport Model SID by construction, so fixtures pass
+      // `validateExternalId` by default without every test needing to know
+      // that format itself.
+      providerAssetId: input.providerAssetId ?? `sid${shortId()}`,
+      internalName: input.internalName ?? "Test Virtual Tour",
+      publicName: input.publicName ?? "Test Virtual Tour",
+      status: input.status ?? "draft",
+      ordering: input.ordering ?? 0,
+    })
+    .returning();
+  if (!row) throw new Error("Failed to create test virtual tour");
   return row;
 }
 

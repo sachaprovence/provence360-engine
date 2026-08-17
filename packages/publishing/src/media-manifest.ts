@@ -11,12 +11,19 @@ import {
   isPublicPropertyStatus,
   isPublicUnitStatus,
 } from "@provence360/rentals";
+import {
+  getVirtualTour,
+  isPublicVirtualTourStatus,
+  virtualTourProviderRegistry,
+} from "@provence360/virtual-tours";
 import type { PublishValidationIssue } from "./errors";
 import type { MediaDescriptor } from "./site-snapshot";
 
+export type DomainRefType = "property" | "unit" | "virtualTour";
+
 export interface CollectedReferences {
   mediaIds: Set<string>;
-  domainRefs: { domainType: "property" | "unit"; id: string }[];
+  domainRefs: { domainType: DomainRefType; id: string }[];
 }
 
 /**
@@ -30,7 +37,7 @@ export function collectReferences(
   pages: ReadonlyArray<{ content: readonly ParsedBlock[]; seo: Seo }>,
 ): CollectedReferences {
   const mediaIds = new Set<string>();
-  const domainRefs: { domainType: "property" | "unit"; id: string }[] = [];
+  const domainRefs: { domainType: DomainRefType; id: string }[] = [];
 
   for (const page of pages) {
     for (const block of page.content) {
@@ -95,7 +102,22 @@ export async function resolveMediaManifest(
   return { media, issues };
 }
 
-type DomainRefCheck = { exists: boolean; active: boolean };
+type DomainRefCheck = {
+  exists: boolean;
+  active: boolean;
+  /**
+   * Defaults to `true` for Property/Unit refs, which have no equivalent
+   * failure mode. Only `virtualTour` refs can be `false`: the referenced
+   * row's `provider` isn't a registered {@link virtualTourProviderRegistry}
+   * definition, or its stored `providerAssetId` no longer passes that
+   * provider's own `validateExternalId` — see `buildSafeVirtualTourEmbed`'s
+   * doc comment (`packages/virtual-tours/src/embed.ts`) for when this can
+   * happen (should be extremely rare: a row predating a provider's removal
+   * or a manual DB edit, never a normal write path, since `normalize()`
+   * already validates at create/update time).
+   */
+  providerValid: boolean;
+};
 
 /**
  * Publish-time existence/tenant/status check for domain-bound block
@@ -136,7 +158,7 @@ type DomainRefCheck = { exists: boolean; active: boolean };
  */
 export async function validateDomainReferences(
   tx: AppTx,
-  domainRefs: readonly { domainType: "property" | "unit"; id: string }[],
+  domainRefs: readonly { domainType: DomainRefType; id: string }[],
 ): Promise<PublishValidationIssue[]> {
   const issues: PublishValidationIssue[] = [];
   const checked = new Map<string, DomainRefCheck>();
@@ -152,22 +174,39 @@ export async function validateDomainReferences(
       checked.set(key, {
         exists: row !== null,
         active: row !== null && isPublicPropertyStatus(row.status),
+        providerValid: true,
       });
-    } else {
+    } else if (ref.domainType === "unit") {
       const row = await getUnit(tx, ref.id);
       checked.set(key, {
         exists: row !== null,
         active: row !== null && isPublicUnitStatus(row.status),
+        providerValid: true,
+      });
+    } else {
+      const row = await getVirtualTour(tx, ref.id);
+      const definition = row ? virtualTourProviderRegistry.get(row.provider) : undefined;
+      checked.set(key, {
+        exists: row !== null,
+        active: row !== null && isPublicVirtualTourStatus(row.status),
+        providerValid:
+          row === null ||
+          (definition !== undefined && definition.validateExternalId(row.providerAssetId)),
       });
     }
   }
 
   for (const [key, result] of checked) {
-    const [domainType, id] = key.split(":") as ["property" | "unit", string];
+    const [domainType, id] = key.split(":") as [DomainRefType, string];
     if (!result.exists) {
       issues.push({
         code: "domain_reference_missing",
         message: `Referenced ${domainType} "${id}" was not found (or does not belong to this tenant).`,
+      });
+    } else if (!result.providerValid) {
+      issues.push({
+        code: "domain_reference_invalid",
+        message: `Referenced ${domainType} "${id}" has a corrupted or unrecognized provider configuration and cannot be published.`,
       });
     } else if (!result.active) {
       issues.push({

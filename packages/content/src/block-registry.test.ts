@@ -11,7 +11,7 @@ import { generateBlockInstanceId } from "./block-instance";
 import { parseBlockInstance, parsePageContentStrict } from "./parse-block";
 
 describe("block registry: built-in blocks", () => {
-  it("registers all 8 required blocks at type@version", () => {
+  it("registers all 9 required blocks at type@version", () => {
     for (const [type, version] of [
       ["hero", 1],
       ["text", 1],
@@ -21,6 +21,7 @@ describe("block registry: built-in blocks", () => {
       ["property-summary", 1],
       ["unit-grid", 1],
       ["amenities", 1],
+      ["virtual-tour", 1],
     ] as const) {
       expect(blockRegistry.get(type, version)).toBeDefined();
     }
@@ -31,6 +32,70 @@ describe("block registry: built-in blocks", () => {
     expect(blockRegistry.get("property-summary", 1)?.capabilities.domainBound).toBe(true);
     expect(blockRegistry.get("unit-grid", 1)?.capabilities.domainBound).toBe(true);
     expect(blockRegistry.get("amenities", 1)?.capabilities.domainBound).toBe(true);
+    expect(blockRegistry.get("virtual-tour", 1)?.capabilities.domainBound).toBe(true);
+  });
+});
+
+describe("virtual-tour@1 props schema", () => {
+  const tourId = "01a00000-0000-7000-8000-0000000000d1";
+
+  it("applies default values (showTitle: true, aspectRatio: '16:9')", () => {
+    const parsed = parseBlockInstance({
+      id: generateBlockInstanceId(),
+      type: "virtual-tour",
+      version: 1,
+      props: { tourId },
+    });
+    expect(parsed.props).toEqual({ tourId, showTitle: true, aspectRatio: "16:9" });
+  });
+
+  it("accepts an explicit aspectRatio of '4:3' and posterMediaId", () => {
+    const posterMediaId = "01a00000-0000-7000-8000-0000000000e1";
+    const parsed = parseBlockInstance({
+      id: generateBlockInstanceId(),
+      type: "virtual-tour",
+      version: 1,
+      props: { tourId, aspectRatio: "4:3", showTitle: false, posterMediaId },
+    });
+    expect(parsed.props).toEqual({
+      tourId,
+      aspectRatio: "4:3",
+      showTitle: false,
+      posterMediaId,
+    });
+  });
+
+  it("rejects a missing tourId", () => {
+    expect(() =>
+      parseBlockInstance({
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: {},
+      }),
+    ).toThrow(InvalidBlockPropsError);
+  });
+
+  it("rejects an aspectRatio outside the closed enum", () => {
+    expect(() =>
+      parseBlockInstance({
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId, aspectRatio: "1:1" },
+      }),
+    ).toThrow(InvalidBlockPropsError);
+  });
+
+  it("rejects a non-UUID tourId", () => {
+    expect(() =>
+      parseBlockInstance({
+        id: generateBlockInstanceId(),
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: "not-a-uuid" },
+      }),
+    ).toThrow(InvalidBlockPropsError);
   });
 });
 

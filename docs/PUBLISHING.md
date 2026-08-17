@@ -126,19 +126,30 @@ use and correctly falls back to a live, tenant-scoped lookup instead — it
 must show _today's_ draft media. See
 [ADR 0017](adr/0017-site-composition-kernel.md#decision-4--media-presentation-frozen-business-live-extended-to-media).
 
-Domain-bound blocks (PropertySummary/UnitGrid/Amenities) get a lighter
-publish-time check — their referenced `propertyId`/`unitId` must exist for
-the current tenant (`domain_reference_missing` if not) **and** (v0.6) must
-currently be public (`isPublicPropertyStatus`/`isPublicUnitStatus` —
-`domain_reference_not_active` if not: a `draft`/`archived` row) — but
-nothing about that row is frozen; Property/Unit/Amenity data stays
-entirely live, per v0.4's own boundary (unchanged, see below). The v0.6
-active-status check is a publish-time UX improvement (fail fast, at edit
-time), not a change to the runtime boundary itself: an already-published
-Revision whose referenced Property is later archived is unaffected — its
-presentation stays frozen, and the live read simply stops surfacing that
-Property publicly from then on (see
+Domain-bound blocks (PropertySummary/UnitGrid/Amenities/**VirtualTour,
+v0.7**) get a lighter publish-time check — their referenced
+`propertyId`/`unitId`/`tourId` must exist for the current tenant
+(`domain_reference_missing` if not) **and** (v0.6) must currently be
+public (`isPublicPropertyStatus`/`isPublicUnitStatus`/
+`isPublicVirtualTourStatus` — `domain_reference_not_active` if not: a
+`draft`/`archived` row) — but nothing about that row is frozen; Property/
+Unit/Amenity/VirtualTour data stays entirely live, per v0.4's own boundary
+(unchanged, see below). The v0.6 active-status check is a publish-time UX
+improvement (fail fast, at edit time), not a change to the runtime
+boundary itself: an already-published Revision whose referenced Property
+(or, v0.7, VirtualTour) is later archived is unaffected — its
+presentation stays frozen, and the live read simply stops surfacing it
+publicly from then on (see
 [docs/SITE_DOMAIN.md#public-vs-admin-visibility-v06](SITE_DOMAIN.md#public-vs-admin-visibility-v06)).
+
+**v0.7:** a VirtualTour reference gets one more check, distinct from
+both existence and active-status: `domain_reference_invalid`, when the
+row's `provider` isn't a currently-registered `VirtualTourProviderDefinition`
+or its stored `providerAssetId` no longer passes that provider's own
+`validateExternalId` — a defensive check against a row predating a
+provider's removal from the registry (or a raw, non-repository DB edit),
+not a path any normal write ever takes. See
+[ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-5--publish-time-validation-gains-a-third-failure-mode-domain_reference_invalid).
 
 ## Snapshot format & versioning (v0.5)
 
@@ -178,11 +189,13 @@ Concurrency below). It checks:
 - **(v0.5)** every media reference any block/SEO field holds resolves to a
   tenant-owned MediaAsset (`media_reference_missing` otherwise — see
   "Media" above);
-- **(v0.5, hardened v0.6)** every domain-bound block's `propertyId`/
-  `unitId` reference exists for this tenant (`domain_reference_missing`
-  otherwise) and is currently public (`domain_reference_not_active`
-  otherwise — see "Media" above; this check does not freeze the
-  referenced row).
+- **(v0.5, hardened v0.6, extended v0.7)** every domain-bound block's
+  `propertyId`/`unitId`/`tourId` reference exists for this tenant
+  (`domain_reference_missing` otherwise) and is currently public
+  (`domain_reference_not_active` otherwise — see "Media" above; this
+  check does not freeze the referenced row). A VirtualTour reference
+  additionally must have a currently-registered, still-valid provider
+  configuration (`domain_reference_invalid` otherwise).
 
 A `draft`/`archived` Page is excluded from the snapshot — `pageStatusValues`
 already existed precisely so an author can keep a Page out of the next

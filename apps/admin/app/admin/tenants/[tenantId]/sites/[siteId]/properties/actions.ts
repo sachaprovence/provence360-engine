@@ -15,6 +15,11 @@ import {
   updateUnit,
 } from "@provence360/rentals";
 import { toSlug } from "@provence360/validation";
+import {
+  createVirtualTour,
+  deleteVirtualTour,
+  updateVirtualTour,
+} from "@provence360/virtual-tours";
 import { withTenantPage } from "@/lib/actor";
 
 export interface FormActionState {
@@ -410,4 +415,96 @@ export async function deleteSleepingArrangementAction(
     deleteSleepingArrangement(tx, sleepingArrangementId),
   );
   revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}/units/${unitId}`);
+}
+
+// v0.7 — Virtual Tour & Immersive Experience Kernel (see
+// docs/adr/0019-virtual-tour-immersive-kernel.md). Only "matterport" is a
+// registered provider today, so the form below doesn't offer a picker —
+// this schema still names the field explicitly rather than hardcoding it
+// server-side, so adding a second provider later is "add an <option>",
+// never a schema change here.
+const createVirtualTourSchema = z.object({
+  internalName: z.string().trim().min(1).max(200),
+  publicName: z.string().trim().min(1).max(200),
+  provider: z.literal("matterport"),
+  rawProviderInput: z.string().trim().min(1).max(2000),
+  unitId: z.string().trim().uuid().optional(),
+});
+
+export async function createVirtualTourAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const parsed = createVirtualTourSchema.safeParse({
+    internalName: formData.get("internalName"),
+    publicName: formData.get("publicName"),
+    provider: formData.get("provider"),
+    rawProviderInput: formData.get("rawProviderInput"),
+    unitId: formData.get("unitId")?.toString() || undefined,
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+
+  try {
+    await withTenantPage(tenantId, "tour.create", (tx, actor) =>
+      createVirtualTour(tx, {
+        propertyId,
+        provider: parsed.data.provider,
+        rawProviderInput: parsed.data.rawProviderInput,
+        internalName: parsed.data.internalName,
+        publicName: parsed.data.publicName,
+        ...(parsed.data.unitId ? { unitId: parsed.data.unitId } : {}),
+        actorUserId: actor.userId,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "PropertyNotFoundError")
+      return { error: "Property not found." };
+    if (error instanceof Error && error.name === "UnitNotFoundError")
+      return { error: "That unit does not belong to this property." };
+    if (error instanceof Error && error.name === "InvalidVirtualTourProviderInputError")
+      return { error: error.message };
+    throw error;
+  }
+
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}`);
+  return {};
+}
+
+const tourStatusSchema = z.enum(["draft", "active", "archived"]);
+
+/**
+ * A direct (non-`useActionState`) mutation, same shape as
+ * `setPropertyAmenitiesAction`/`deleteUnitAction` above — called from a
+ * `<select onChange>` via `startTransition`, not a `<form>` submit. This is
+ * the UI path that proves section 13's "archiving a Tour removes it from
+ * the public site immediately, without a republish" behavior: nothing here
+ * touches the Page/Block/Revision at all, only the VirtualTour row itself.
+ */
+export async function updateVirtualTourStatusAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  tourId: string,
+  status: string,
+): Promise<void> {
+  const parsedStatus = tourStatusSchema.parse(status);
+  await withTenantPage(tenantId, "tour.update", (tx, actor) =>
+    updateVirtualTour(tx, { id: tourId, status: parsedStatus, actorUserId: actor.userId }),
+  );
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}`);
+}
+
+export async function deleteVirtualTourAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  tourId: string,
+): Promise<void> {
+  await withTenantPage(tenantId, "tour.delete", (tx, actor) =>
+    deleteVirtualTour(tx, tourId, actor.userId),
+  );
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}`);
 }

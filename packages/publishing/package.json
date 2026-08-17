@@ -22,6 +22,7 @@
     "@provence360/tenant": "workspace:*",
     "@provence360/themes": "workspace:*",
     "@provence360/validation": "workspace:*",
+    "@provence360/virtual-tours": "workspace:*",
     "drizzle-orm": "0.45.2",
     "zod": "4.4.3"
   },

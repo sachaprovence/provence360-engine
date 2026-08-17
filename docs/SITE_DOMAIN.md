@@ -142,12 +142,40 @@ a new version of a file is a new row, never an edit, the same
 immutability reasoning as an audit log entry). Content references
 `MediaAsset.id`, never a bare URL.
 
+## VirtualTour (v0.7)
+
+A reference to an externally-hosted immersive tour (Matterport Showcase,
+and — closed-registry — future providers), never the embed itself: see
+[ADR 0019](adr/0019-virtual-tour-immersive-kernel.md). Deliberately not a
+`MediaAsset` variant — a VirtualTour has an external provider, a business
+lifecycle (`draft`/`active`/`archived`, same shape as `Property`/`Unit`),
+and an embed policy, none of which fit MediaAsset's "reference to a stored
+file" shape.
+
+Always belongs to a `Property`; a `Unit` is optional — the same
+"a Property may, but needn't, decompose into Units" shape
+`unit_sleeping_arrangements` already establishes. When `unitId` is set,
+the composite FK forces it to be a Unit of _this same_ Property and
+tenant — Postgres-enforced, not merely a TypeScript-level check (see
+"Ownership consistency" below).
+
+Embedded on a Page via `virtual-tour@1`, the exact same generic
+`BlockDefinition.references` mechanism every other domain block already
+uses — no parallel reference system. The referenced row stays entirely
+live at render time (Presentation-Frozen/Business-Live, unchanged from
+Property/Unit): an admin repointing the tour's target asset, or archiving
+it, takes effect on the public site immediately, without a republish. See
+[docs/RENDERING.md](RENDERING.md) and
+[docs/PUBLISHING.md](PUBLISHING.md).
+
 ## Ownership consistency: DB constraints, not only RLS
 
 Every new tenant-scoped table carries both `tenant_id` (for RLS) **and** a
 composite foreign key tying `(tenant_id, parent_id)` to the parent's own
 `(tenant_id, id)` — `properties → sites`, `units → properties`,
-`unit_amenities → units`, `pages → sites`. A row that tried to claim
+`unit_amenities → units`, `pages → sites`, `virtual_tours → properties`
+(and, conditionally, `virtual_tours → units` — see "VirtualTour" above).
+A row that tried to claim
 `tenant_id = A` while pointing at a parent owned by tenant `B` is rejected
 by Postgres at `INSERT`/`UPDATE` time (`23503 foreign_key_violation`),
 _before_ RLS's `WITH CHECK` clause is ever reached — a second, independent
@@ -241,6 +269,15 @@ concrete mechanism behind the worked example this section's reasoning
 implies: a Property later archived stays a valid reference, but a visitor
 loading that old Revision sees `DomainReferenceUnavailable`, not stale
 public data for a Property the owner has since retired.
+
+**v0.7 update:** `VirtualTour` follows exactly the "referenced, safely"
+rule Property/Unit/Amenity already established — a `virtual-tour@1`
+block's frozen presentation always resolves against today's live
+VirtualTour row, never a snapshot of it. The same visibility mechanism
+Property/Unit use (a status filter on the live read, not a copy) governs
+it too: `isPublicVirtualTourStatus`/`getPublicVirtualTour`, selected by
+the same `RenderContext.publicOnly` flag. See
+[ADR 0019](adr/0019-virtual-tour-immersive-kernel.md).
 
 ## Twelve invariants
 

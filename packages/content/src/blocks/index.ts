@@ -7,6 +7,7 @@ import { heroBlockV1 } from "./hero";
 import { propertySummaryBlockV1 } from "./property-summary";
 import { textBlockV1 } from "./text";
 import { unitGridBlockV1 } from "./unit-grid";
+import { virtualTourBlockV1 } from "./virtual-tour";
 
 // Registers every built-in block exactly once, as a side effect of
 // importing this module (ES modules are evaluated once per process — a
@@ -23,6 +24,7 @@ registerBlock(ctaBlockV1);
 registerBlock(propertySummaryBlockV1);
 registerBlock(unitGridBlockV1);
 registerBlock(amenitiesBlockV1);
+registerBlock(virtualTourBlockV1);
 
 export {
   amenitiesBlockV1,
@@ -33,6 +35,7 @@ export {
   propertySummaryBlockV1,
   textBlockV1,
   unitGridBlockV1,
+  virtualTourBlockV1,
 };
 export type { AmenitiesProps } from "./amenities";
 export type { CtaProps } from "./cta";
@@ -42,3 +45,4 @@ export type { HeroProps } from "./hero";
 export type { PropertySummaryProps } from "./property-summary";
 export type { TextProps } from "./text";
 export type { UnitGridProps } from "./unit-grid";
+export type { VirtualTourProps } from "./virtual-tour";

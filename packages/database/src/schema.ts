@@ -665,6 +665,16 @@ export const units = pgTable(
   (t) => [
     uniqueIndex("units_property_slug_uidx").on(t.propertyId, t.slug),
     uniqueIndex("units_tenant_id_id_uidx").on(t.tenantId, t.id),
+    // v0.7: lets a child table declare a composite FK against
+    // `(tenant_id, property_id, id)` — not just `(tenant_id, id)` — so
+    // Postgres itself can enforce "this Unit belongs to this Property,"
+    // not only "this Unit belongs to this tenant." See `virtual_tours`
+    // below and docs/adr/0019-virtual-tour-immersive-kernel.md. Added here
+    // (a new index on an existing table) rather than modifying migration
+    // 0000/0005's original DDL — append-only, same pattern as
+    // `sites_tenant_id_id_uidx` (migration 0000) enabling later composite
+    // FKs from `properties`/`pages`.
+    uniqueIndex("units_tenant_property_id_uidx").on(t.tenantId, t.propertyId, t.id),
     index("units_tenant_id_idx").on(t.tenantId),
     index("units_property_id_idx").on(t.propertyId),
     foreignKey({
@@ -838,6 +848,104 @@ export const propertyAmenities = pgTable(
       name: "property_amenities_tenant_property_fk",
     }).onDelete("cascade"),
     pgPolicy("tenant_isolation_property_amenities", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// virtual_tours — v0.7: a reference to an externally-hosted immersive tour
+// (Matterport Showcase and, later, other providers), never the embed
+// itself. Deliberately NOT a `MediaAsset` (see
+// docs/adr/0019-virtual-tour-immersive-kernel.md): a tour has a provider,
+// an external identity, a business lifecycle (draft/active/archived) of
+// its own, and an embed policy — none of which fit MediaAsset's
+// "reference to a stored file" shape.
+//
+// A VirtualTour always belongs to a Property; a Unit is optional (a
+// whole-Property tour vs. a Unit-specific one — same "not every Property
+// has meaningfully separate Units" shape as `units` itself, see
+// docs/SITE_DOMAIN.md). When `unit_id` is set, the composite FK below
+// forces it to be a Unit of *this same* Property and tenant — Postgres
+// enforced, not merely a TypeScript-level check.
+// ---------------------------------------------------------------------------
+export const virtualTourProviderValues = ["matterport"] as const;
+export type VirtualTourProvider = (typeof virtualTourProviderValues)[number];
+
+// Same three-state shape as `properties`/`units`: `draft` while an owner is
+// still setting it up, `active` once it's meant to be publicly embeddable,
+// `archived` once retired — never deleted outright unless the tenant
+// explicitly deletes the row (see `deleteVirtualTour`). Only `active` is
+// ever publicly embeddable — see `isPublicVirtualTourStatus` in
+// `packages/virtual-tours`.
+export const virtualTourStatusValues = ["draft", "active", "archived"] as const;
+export type VirtualTourStatus = (typeof virtualTourStatusValues)[number];
+
+export const virtualTours = pgTable(
+  "virtual_tours",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    propertyId: uuid("property_id").notNull(),
+    unitId: uuid("unit_id"),
+    provider: text("provider", { enum: virtualTourProviderValues }).notNull(),
+    // The provider's own canonical, normalized identity for this tour
+    // (e.g. a Matterport model SID) — never a raw pasted URL, never HTML.
+    // See `packages/virtual-tours`' provider registry: the admin-facing
+    // input (a share URL or a bare id) is parsed and normalized to this
+    // value *before* it ever reaches this column.
+    providerAssetId: text("provider_asset_id").notNull(),
+    internalName: text("internal_name").notNull(),
+    publicName: text("public_name").notNull(),
+    status: text("status", { enum: virtualTourStatusValues }).notNull().default("draft"),
+    // Render order when a Property/Unit has more than one tour — same
+    // pattern as `units.ordering`/`unit_sleeping_arrangements.ordering`.
+    ordering: integer("ordering").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("virtual_tours_tenant_id_id_uidx").on(t.tenantId, t.id),
+    index("virtual_tours_tenant_id_idx").on(t.tenantId),
+    index("virtual_tours_property_id_idx").on(t.propertyId),
+    index("virtual_tours_unit_id_idx").on(t.unitId),
+    foreignKey({
+      columns: [t.tenantId, t.propertyId],
+      foreignColumns: [properties.tenantId, properties.id],
+      name: "virtual_tours_tenant_property_fk",
+    }).onDelete("cascade"),
+    // The Unit-ownership guarantee (section 5 of the brief): under
+    // Postgres's default MATCH SIMPLE, this composite FK is satisfied
+    // (not checked at all) whenever `unit_id` is NULL — exactly the
+    // "Property-level tour, no Unit" case. Whenever `unit_id` IS set, all
+    // three columns are non-null and Postgres requires a matching
+    // `units` row with that *same* `tenant_id` AND `property_id` AND
+    // `id` — a Unit belonging to a different Property (even within the
+    // same tenant) is rejected at INSERT/UPDATE time (`23503`), not
+    // merely something application code happens to also check. See
+    // `units_tenant_property_id_uidx` above.
+    foreignKey({
+      columns: [t.tenantId, t.propertyId, t.unitId],
+      foreignColumns: [units.tenantId, units.propertyId, units.id],
+      name: "virtual_tours_tenant_property_unit_fk",
+    }).onDelete("cascade"),
+    check("virtual_tours_ordering_nonneg_ck", sql`${t.ordering} >= 0`),
+    check("virtual_tours_provider_asset_id_nonempty_ck", sql`length(${t.providerAssetId}) > 0`),
+    // Deliberately NOT `unique(tenant_id, provider, provider_asset_id)`:
+    // the same physical provider asset (e.g. a Matterport Space covering
+    // a shared amenity area) may legitimately be worth referencing from
+    // more than one VirtualTour row (a Property-level tour and a
+    // Unit-level one pointing at the same underlying space, or a
+    // duplicated draft being iterated on before archiving the original).
+    // Nothing in the brief requires "one row per provider asset per
+    // tenant," and adding that constraint speculatively would block a
+    // legitimate re-use case for no stated benefit — see
+    // docs/adr/0019-virtual-tour-immersive-kernel.md.
+    pgPolicy("tenant_isolation_virtual_tours", {
       for: "all",
       to: appRole,
       using: tenantMatch,
