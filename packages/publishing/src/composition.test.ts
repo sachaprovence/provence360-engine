@@ -485,6 +485,99 @@ describe("Domain references: publish-time existence/tenant check (business data 
     }
   });
 
+  it("v0.6: a draft (not yet active) Property is rejected at publish with domain_reference_not_active, distinct from domain_reference_missing", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const draftProperty = await createProperty({
+      tenantId: tenant.id,
+      siteId: site.id,
+      status: "draft",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "property-summary", version: 1, props: { propertyId: draftProperty.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_not_active")).toBe(true);
+      expect(result.issues.some((i) => i.code === "domain_reference_missing")).toBe(false);
+    }
+  });
+
+  it("v0.6: an archived Property is likewise rejected at publish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const archivedProperty = await createProperty({
+      tenantId: tenant.id,
+      siteId: site.id,
+      status: "archived",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      {
+        id: "b1",
+        type: "property-summary",
+        version: 1,
+        props: { propertyId: archivedProperty.id },
+      },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_not_active")).toBe(true);
+    }
+  });
+
+  it("v0.6: a draft Unit (amenities block) is likewise rejected at publish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const draftUnit = await createUnit({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "draft",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "amenities", version: 1, props: { unitId: draftUnit.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_not_active")).toBe(true);
+    }
+  });
+
+  it("v0.6: a not_bookable_separately Unit is accepted (public, just not independently bookable)", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const unit = await createUnit({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "not_bookable_separately",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "amenities", version: 1, props: { unitId: unit.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(true);
+  });
+
+  it("v0.6: a property-scoped amenities block references its Property, not a Unit", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "amenities", version: 1, props: { propertyId: property.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(true);
+  });
+
   it("does not freeze the Property's own business fields into the snapshot — only the reference (Presentation frozen, Business live)", async () => {
     const tenant = await createTenant();
     const site = await createSite({ tenantId: tenant.id });

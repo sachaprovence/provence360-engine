@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getUnit, listAmenities, listAmenitiesForUnit } from "@provence360/rentals";
+import {
+  getUnit,
+  listAmenities,
+  listAmenitiesForUnit,
+  listSleepingArrangementsForUnit,
+} from "@provence360/rentals";
 import { withTenantPage } from "@/lib/actor";
 import { AmenitiesForm } from "./amenities-form";
+import { SleepingArrangementsForm } from "./sleeping-arrangements-form";
 import { UnitEditForm } from "./unit-edit-form";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +20,14 @@ export default async function UnitDetailPage({
 }) {
   const { tenantId, siteId, propertyId, unitId } = await params;
 
-  const { unit, catalog, attached, canUpdate } = await withTenantPage(
+  const { unit, catalog, attached, sleepingArrangements, canUpdate } = await withTenantPage(
     tenantId,
     "unit.read",
     async (tx, actor) => ({
       unit: await getUnit(tx, unitId),
       catalog: await listAmenities(tx),
       attached: await listAmenitiesForUnit(tx, unitId),
+      sleepingArrangements: await listSleepingArrangementsForUnit(tx, unitId),
       canUpdate: actor.permissions.has("unit.update"),
     }),
   );
@@ -67,6 +74,26 @@ export default async function UnitDetailPage({
         <ul style={{ fontSize: 14, color: "#374151" }}>
           {attached.map((amenity) => (
             <li key={amenity.amenityId}>{amenity.label}</li>
+          ))}
+        </ul>
+      )}
+
+      <h2 style={{ fontSize: 16, marginBottom: 8, marginTop: 20 }}>Sleeping arrangements</h2>
+      {canUpdate ? (
+        <SleepingArrangementsForm
+          tenantId={tenantId}
+          siteId={siteId}
+          propertyId={propertyId}
+          unitId={unitId}
+          arrangements={sleepingArrangements}
+        />
+      ) : (
+        <ul style={{ fontSize: 14, color: "#374151" }}>
+          {sleepingArrangements.map((row) => (
+            <li key={row.id}>
+              {row.roomLabel ? `${row.roomLabel}: ` : ""}
+              {row.quantity} × {row.bedType}
+            </li>
           ))}
         </ul>
       )}

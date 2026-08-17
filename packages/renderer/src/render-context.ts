@@ -42,6 +42,20 @@ export interface FrozenMediaDescriptor {
  * lookup, which is the semantically correct behavior for a preview (it
  * must show *today's* draft media, not a manifest that doesn't exist).
  * See docs/PUBLISHING.md#media.
+ *
+ * `publicOnly` (v0.6, optional): mirrors `media`'s own draft/published
+ * split, one level down, for Rental *business* data rather than frozen
+ * presentation. `true` when rendering for an actual public visitor:
+ * domain-bound blocks (`property-summary`, `unit-grid`, `amenities`) then
+ * only resolve Property/Unit rows that are currently public
+ * (`isPublicPropertyStatus`/`isPublicUnitStatus` in `@provence360/rentals`)
+ * and apply the Property's `locationDisclosure` filtering to any address
+ * shown. `undefined`/`false` for admin draft-preview: an owner previewing
+ * their own Site sees the full live row regardless of status or
+ * disclosure, since they're editing it, not visiting as a guest. This is
+ * deliberately independent of `media` (a page can be a published preview
+ * with frozen media before a Property referenced by it is even active) -
+ * see docs/adr/0018-rental-domain-guest-experience.md.
  */
 export interface RenderContext {
   tx: AppTx;
@@ -51,4 +65,5 @@ export interface RenderContext {
   defaultLocale: string;
   tokens: ThemeTokens;
   media?: ReadonlyMap<string, FrozenMediaDescriptor> | undefined;
+  publicOnly?: boolean | undefined;
 }

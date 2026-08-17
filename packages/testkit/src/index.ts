@@ -1,5 +1,6 @@
 export { ensureTestDatabaseReady, resetDatabase } from "./lifecycle";
 export {
+  attachPropertyAmenity,
   attachUnitAmenity,
   createAmenity,
   createDomain,
@@ -9,6 +10,7 @@ export {
   createProperty,
   createSite,
   createSiteRevision,
+  createSleepingArrangement,
   createTenant,
   createTheme,
   createUnit,

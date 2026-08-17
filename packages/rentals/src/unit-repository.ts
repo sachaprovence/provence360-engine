@@ -1,9 +1,28 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { AppTx, UnitSizeUnit, UnitStatus } from "@provence360/database";
 import { properties, units } from "@provence360/database";
 import { recordAuditLog } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
-import { PropertyNotFoundError, UnitNotFoundError } from "./errors";
+import { PropertyNotFoundError, UnitConflictError, UnitNotFoundError } from "./errors";
+
+// See packages/sites/src/site-repository.ts's `eqUpdatedAtMs` for why this
+// truncates to millisecond precision rather than a plain `eq()`.
+function eqUpdatedAtMs(column: typeof units.updatedAt, expected: Date): SQL {
+  return sql`date_trunc('milliseconds', ${column}) = date_trunc('milliseconds', ${expected.toISOString()}::timestamptz)`;
+}
+
+/**
+ * A Unit is shown on the public site when it is `"active"` or
+ * `"not_bookable_separately"` (a Unit that's real and presentable but only
+ * as part of its Property, e.g. a room within a whole-villa listing) —
+ * this is the exact predicate `unit-grid.tsx` already applied inline
+ * pre-v0.6; it now lives here as the one place every public-facing caller
+ * (renderer, publish-time validation) should read it from. `"draft"`/
+ * `"archived"` Units are never public. See section 13 of the v0.6 brief.
+ */
+export function isPublicUnitStatus(status: UnitStatus): boolean {
+  return status === "active" || status === "not_bookable_separately";
+}
 
 export interface CreateUnitInput {
   propertyId: string;
@@ -82,11 +101,13 @@ export interface UpdateUnitInput {
   description?: string;
   ordering?: number;
   actorUserId?: string;
+  /** Optimistic-concurrency token (v0.6) — see {@link UnitConflictError}. Opt-in: omitted, every pre-v0.6 caller keeps its unconditional last-write-wins behavior. */
+  expectedUpdatedAt?: Date;
 }
 
 export async function updateUnit(tx: AppTx, input: UpdateUnitInput) {
   const tenantId = requireCurrentTenantId();
-  const { id, actorUserId, bathrooms, size, ...rest } = input;
+  const { id, actorUserId, bathrooms, size, expectedUpdatedAt, ...rest } = input;
 
   const [row] = await tx
     .update(units)
@@ -95,9 +116,26 @@ export async function updateUnit(tx: AppTx, input: UpdateUnitInput) {
       ...(bathrooms !== undefined ? { bathrooms: String(bathrooms) } : {}),
       ...(size !== undefined ? { size: String(size) } : {}),
     })
-    .where(and(eq(units.id, id), eq(units.tenantId, tenantId)))
+    .where(
+      expectedUpdatedAt
+        ? and(
+            eq(units.id, id),
+            eq(units.tenantId, tenantId),
+            eqUpdatedAtMs(units.updatedAt, expectedUpdatedAt),
+          )
+        : and(eq(units.id, id), eq(units.tenantId, tenantId)),
+    )
     .returning();
-  if (!row) throw new UnitNotFoundError(id);
+  if (!row) {
+    if (expectedUpdatedAt) {
+      const [stillExists] = await tx
+        .select({ id: units.id })
+        .from(units)
+        .where(and(eq(units.id, id), eq(units.tenantId, tenantId)));
+      if (stillExists) throw new UnitConflictError(id);
+    }
+    throw new UnitNotFoundError(id);
+  }
 
   await recordAuditLog(tx, {
     ...(actorUserId ? { actorUserId } : {}),
@@ -144,4 +182,16 @@ export async function listUnitsForProperty(tx: AppTx, propertyId: string) {
     .from(units)
     .where(and(eq(units.propertyId, propertyId), eq(units.tenantId, tenantId)))
     .orderBy(units.ordering);
+}
+
+/** Same lookup as `getUnit`, additionally gated on {@link isPublicUnitStatus} — see `getPublicProperty`'s doc comment for why this exists as a named function. */
+export async function getPublicUnit(tx: AppTx, id: string) {
+  const row = await getUnit(tx, id);
+  return row && isPublicUnitStatus(row.status) ? row : null;
+}
+
+/** Same query as `listUnitsForProperty`, filtered to {@link isPublicUnitStatus} — the renderer's `unit-grid` block now calls this instead of filtering inline. */
+export async function listPublicUnitsForProperty(tx: AppTx, propertyId: string) {
+  const rows = await listUnitsForProperty(tx, propertyId);
+  return rows.filter((unit) => isPublicUnitStatus(unit.status));
 }

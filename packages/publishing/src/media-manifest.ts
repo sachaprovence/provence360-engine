@@ -5,7 +5,12 @@ import {
   type ParsedBlock,
   type Seo,
 } from "@provence360/content";
-import { getProperty, getUnit } from "@provence360/rentals";
+import {
+  getProperty,
+  getUnit,
+  isPublicPropertyStatus,
+  isPublicUnitStatus,
+} from "@provence360/rentals";
 import type { PublishValidationIssue } from "./errors";
 import type { MediaDescriptor } from "./site-snapshot";
 
@@ -90,21 +95,51 @@ export async function resolveMediaManifest(
   return { media, issues };
 }
 
+type DomainRefCheck = { exists: boolean; active: boolean };
+
 /**
- * Publish-time existence/tenant check for domain-bound block references
- * (section 10 of the brief) — deliberately not a freeze. Property/Unit
- * data stays entirely live (docs/SITE_DOMAIN.md#future-release-compatibility);
- * nothing returned here is copied into the snapshot, this only catches a
- * manifestly broken or cross-tenant reference *before* it's frozen into a
+ * Publish-time existence/tenant/status check for domain-bound block
+ * references (section 10/14 of the v0.6 brief) — deliberately not a
+ * freeze. Property/Unit data stays entirely live
+ * (docs/SITE_DOMAIN.md#future-release-compatibility); nothing returned
+ * here is copied into the snapshot, this only catches a manifestly broken,
+ * cross-tenant, or non-public reference *before* it's frozen into a
  * Revision that would otherwise always render `DomainReferenceUnavailable`
  * for that block, for as long as that Revision is ever published.
+ *
+ * v0.6 hardening: a reference to a real, tenant-owned Property/Unit that
+ * simply isn't public right now (`draft`/`archived` Property,
+ * `draft`/`archived` Unit) is now also a publish-blocking issue
+ * (`domain_reference_not_active`), distinct from `domain_reference_missing`
+ * — v0.5's original existence+tenant-only check was not a bug relative to
+ * what it explicitly documented itself as doing, but it left a real gap:
+ * nothing stopped a page from being published bound to rental data that
+ * would immediately render as unavailable to every visitor. This is a
+ * deliberate publish-time UX improvement (fail fast, at edit time, instead
+ * of silently at render time), not a correctness fix — the *runtime*
+ * boundary (an already-published Revision whose referenced Property is
+ * later archived) is unaffected and unchanged: presentation stays frozen,
+ * the live Rental-data read simply stops returning it publicly (see
+ * `packages/rentals`' `isPublicPropertyStatus`/`isPublicUnitStatus` and
+ * docs/adr/0018-rental-domain-guest-experience.md).
+ *
+ * Deliberately NOT validated here: whether a `unit-grid` block's explicit
+ * `unitIds` actually belong to its own declared `propertyId`. Adding that
+ * would require this function (which only sees a flat, block-type-agnostic
+ * list of `{domainType, id}` references — see `collectReferences`) to gain
+ * block-type-specific knowledge, which is exactly the central-switch
+ * design this reference mechanism was built to avoid (section 8 of the
+ * v0.5 brief). It's safe to defer: the renderer already fails closed on
+ * this case today — `unit-grid.tsx` only ever selects from Units it
+ * already fetched scoped to `props.propertyId`, so a stray `unitId` from a
+ * different Property simply never appears, never wrongly displayed.
  */
 export async function validateDomainReferences(
   tx: AppTx,
   domainRefs: readonly { domainType: "property" | "unit"; id: string }[],
 ): Promise<PublishValidationIssue[]> {
   const issues: PublishValidationIssue[] = [];
-  const checked = new Map<string, boolean>();
+  const checked = new Map<string, DomainRefCheck>();
 
   for (const ref of domainRefs) {
     const key = `${ref.domainType}:${ref.id}`;
@@ -112,18 +147,34 @@ export async function validateDomainReferences(
     // Sequential on purpose: publish is not a hot path, and each check is
     // a single indexed row lookup — no batching benefit worth the added
     // complexity here (unlike media, which batches into one IN (...) query).
-    const row =
-      ref.domainType === "property" ? await getProperty(tx, ref.id) : await getUnit(tx, ref.id);
-    checked.set(key, row !== null);
+    if (ref.domainType === "property") {
+      const row = await getProperty(tx, ref.id);
+      checked.set(key, {
+        exists: row !== null,
+        active: row !== null && isPublicPropertyStatus(row.status),
+      });
+    } else {
+      const row = await getUnit(tx, ref.id);
+      checked.set(key, {
+        exists: row !== null,
+        active: row !== null && isPublicUnitStatus(row.status),
+      });
+    }
   }
 
-  for (const [key, exists] of checked) {
-    if (exists) continue;
+  for (const [key, result] of checked) {
     const [domainType, id] = key.split(":") as ["property" | "unit", string];
-    issues.push({
-      code: "domain_reference_missing",
-      message: `Referenced ${domainType} "${id}" was not found (or does not belong to this tenant).`,
-    });
+    if (!result.exists) {
+      issues.push({
+        code: "domain_reference_missing",
+        message: `Referenced ${domainType} "${id}" was not found (or does not belong to this tenant).`,
+      });
+    } else if (!result.active) {
+      issues.push({
+        code: "domain_reference_not_active",
+        message: `Referenced ${domainType} "${id}" exists but is not currently active/public — a draft or archived ${domainType} cannot be published.`,
+      });
+    }
   }
   return issues;
 }

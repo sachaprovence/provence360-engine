@@ -69,6 +69,10 @@ export const renderPublishedPage = cache(async (slug: string): Promise<RenderedS
       defaultLocale: published.snapshot.site.defaultLocale,
       tokens: published.snapshot.theme.tokens,
       media,
+      // Every visitor reaching this pipeline is a real public visitor —
+      // see `RenderContext.publicOnly`'s own doc comment for what this
+      // gates (Rental data status + location-privacy filtering).
+      publicOnly: true,
     };
 
     const elements = await renderBlocks(page.content, context);

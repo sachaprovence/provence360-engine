@@ -17,7 +17,18 @@ export function UnitEditForm({
   siteId: string;
   propertyId: string;
   unitId: string;
-  unit: { publicName: string; maxGuests: number | null; bedrooms: number | null; status: string };
+  unit: {
+    internalName: string;
+    publicName: string;
+    maxGuests: number | null;
+    bedrooms: number | null;
+    beds: number | null;
+    bathrooms: string | null;
+    size: string | null;
+    sizeUnit: string | null;
+    description: string | null;
+    status: string;
+  };
 }) {
   const [state, formAction, isPending] = useActionState(
     updateUnitAction.bind(null, tenantId, siteId, propertyId, unitId),
@@ -26,6 +37,10 @@ export function UnitEditForm({
 
   return (
     <form action={formAction} style={{ display: "grid", gap: 10, maxWidth: 420, marginBottom: 24 }}>
+      <label style={labelStyle}>
+        Internal name
+        <input name="internalName" defaultValue={unit.internalName} style={inputStyle} />
+      </label>
       <label style={labelStyle}>
         Public name
         <input name="publicName" defaultValue={unit.publicName} style={inputStyle} />
@@ -48,6 +63,56 @@ export function UnitEditForm({
           min={0}
           defaultValue={unit.bedrooms ?? ""}
           style={inputStyle}
+        />
+      </label>
+      <label style={labelStyle}>
+        Beds (fallback aggregate — used only when no sleeping arrangement detail rows exist below)
+        <input
+          name="beds"
+          type="number"
+          min={0}
+          defaultValue={unit.beds ?? ""}
+          style={inputStyle}
+        />
+      </label>
+      <label style={labelStyle}>
+        Bathrooms
+        <input
+          name="bathrooms"
+          type="number"
+          min={0}
+          step={0.5}
+          defaultValue={unit.bathrooms ?? ""}
+          style={inputStyle}
+        />
+      </label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <label style={{ ...labelStyle, flex: 1 }}>
+          Size
+          <input
+            name="size"
+            type="number"
+            min={0}
+            step="any"
+            defaultValue={unit.size ?? ""}
+            style={inputStyle}
+          />
+        </label>
+        <label style={{ ...labelStyle, flex: 1 }}>
+          Size unit
+          <select name="sizeUnit" defaultValue={unit.sizeUnit ?? ""} style={inputStyle}>
+            <option value="">—</option>
+            <option value="sqm">sqm</option>
+            <option value="sqft">sqft</option>
+          </select>
+        </label>
+      </div>
+      <label style={labelStyle}>
+        Description
+        <textarea
+          name="description"
+          defaultValue={unit.description ?? ""}
+          style={{ ...inputStyle, minHeight: 80 }}
         />
       </label>
       <label style={labelStyle}>

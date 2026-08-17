@@ -4,11 +4,13 @@ import type { AppTx } from "@provence360/database";
 import { generateBlockInstanceId } from "@provence360/content";
 import { resolveTheme } from "@provence360/themes";
 import {
+  attachPropertyAmenity,
   attachUnitAmenity,
   createAmenity,
   createMediaAsset,
   createProperty,
   createSite,
+  createSleepingArrangement,
   createTenant,
   createUnit,
   ensureTestDatabaseReady,
@@ -16,7 +18,7 @@ import {
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
 import { getAdminDb } from "@provence360/database/admin";
-import { mediaAssets } from "@provence360/database";
+import { mediaAssets, properties } from "@provence360/database";
 import { eq } from "drizzle-orm";
 import { renderBlocks } from "./index";
 import type { FrozenMediaDescriptor, RenderContext } from "./render-context";
@@ -307,5 +309,219 @@ describe("renderBlocks", () => {
     });
 
     expect(html).toContain("live/preview.jpg");
+  });
+});
+
+describe("v0.6 — public vs preview Rental visibility (RenderContext.publicOnly)", () => {
+  it("PropertySummary shows a draft Property in preview (publicOnly unset) but hides it publicly (publicOnly: true)", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({
+      tenantId: tenant.id,
+      siteId: site.id,
+      publicName: "Villa En Construction",
+      status: "draft",
+    });
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "property-summary",
+        version: 1,
+        props: { propertyId: property.id },
+      },
+    ];
+
+    const previewHtml = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(previewHtml).toContain("Villa En Construction");
+
+    const publicHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(publicHtml).not.toContain("Villa En Construction");
+    expect(publicHtml).toContain('data-block-unavailable="true"');
+  });
+
+  it("Presentation-Frozen / Business-Live boundary: identical, unchanged block props render differently before and after the referenced Property is archived — the block config itself never changes", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({
+      tenantId: tenant.id,
+      siteId: site.id,
+      publicName: "Villa Frozen Presentation",
+      status: "active",
+    });
+    // This exact object simulates a Revision's frozen block config — it is
+    // never mutated between the two renders below.
+    const frozenBlockConfig = [
+      {
+        id: generateBlockInstanceId(),
+        type: "property-summary",
+        version: 1,
+        props: { propertyId: property.id, showAddress: true },
+      },
+    ];
+
+    const beforeHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(frozenBlockConfig, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(beforeHtml).toContain("Villa Frozen Presentation");
+
+    // The Property is archived afterward — simulating exactly the
+    // worked example from section 13 of the brief (a Property later
+    // archived while an already-published Revision keeps referencing it).
+    await getAdminDb()
+      .update(properties)
+      .set({ status: "archived" })
+      .where(eq(properties.id, property.id));
+
+    const afterHtml = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      // The exact same, unmodified block config object — proving the
+      // Revision's *presentation* never had to change for this to happen.
+      const elements = await renderBlocks(frozenBlockConfig, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+    expect(afterHtml).not.toContain("Villa Frozen Presentation");
+    expect(afterHtml).toContain('data-block-unavailable="true"');
+  });
+
+  it("UnitGrid hides draft/archived Units under publicOnly, same as preview — status filtering was already unconditional pre-v0.6", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    await createUnit({ tenantId: tenant.id, propertyId: property.id, publicName: "Active Unit" });
+    await createUnit({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Draft Unit",
+      status: "draft",
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "unit-grid",
+        version: 1,
+        props: { propertyId: property.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("Active Unit");
+    expect(html).not.toContain("Draft Unit");
+  });
+
+  it("UnitGrid's showBedSummary shows the effective bed count (detail sum over the raw aggregate) when detail rows exist", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const unit = await createUnit({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      publicName: "Suite",
+      beds: 9,
+    });
+    await createSleepingArrangement({
+      tenantId: tenant.id,
+      unitId: unit.id,
+      bedType: "king",
+      quantity: 1,
+    });
+    await createSleepingArrangement({
+      tenantId: tenant.id,
+      unitId: unit.id,
+      bedType: "sofa_bed",
+      quantity: 1,
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "unit-grid",
+        version: 1,
+        props: { propertyId: property.id, showBedSummary: true },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("2 beds");
+    expect(html).not.toContain("9 beds");
+  });
+
+  it("Amenities (property-scoped) renders a Property's own attached amenities, distinct from its Units'", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const sharedPool = await createAmenity({ label: "Shared Pool" });
+    await attachPropertyAmenity({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      amenityId: sharedPool.id,
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "amenities",
+        version: 1,
+        props: { propertyId: property.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("Shared Pool");
+  });
+
+  it("PropertySummary never renders a private address when locationDisclosure is 'hidden', even publicly", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const property = await createProperty({
+      tenantId: tenant.id,
+      siteId: site.id,
+      publicName: "Secret Retreat",
+      status: "active",
+      addressLine1: "12 Rue Confidentielle",
+      addressCity: "Cassis",
+      locationDisclosure: "hidden",
+    });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "property-summary",
+        version: 1,
+        props: { propertyId: property.id, showAddress: true },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = { ...contextFor(tenant.id, site.id, tx), publicOnly: true };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("Secret Retreat");
+    expect(html).not.toContain("Rue Confidentielle");
+    expect(html).not.toContain("Cassis");
   });
 });

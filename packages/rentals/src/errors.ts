@@ -25,3 +25,26 @@ export class AmenityNotFoundError extends Error {
     this.name = "AmenityNotFoundError";
   }
 }
+
+export class SleepingArrangementNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Sleeping arrangement "${id}" was not found (or does not belong to the current tenant).`);
+    this.name = "SleepingArrangementNotFoundError";
+  }
+}
+
+/** Optimistic-concurrency conflict — see `packages/sites`' `SiteConflictError` for the same pattern. */
+export class PropertyConflictError extends Error {
+  constructor(propertyId: string) {
+    super(`Property "${propertyId}" was modified by someone else since it was last read.`);
+    this.name = "PropertyConflictError";
+  }
+}
+
+/** Optimistic-concurrency conflict — see `packages/sites`' `SiteConflictError` for the same pattern. */
+export class UnitConflictError extends Error {
+  constructor(unitId: string) {
+    super(`Unit "${unitId}" was modified by someone else since it was last read.`);
+    this.name = "UnitConflictError";
+  }
+}

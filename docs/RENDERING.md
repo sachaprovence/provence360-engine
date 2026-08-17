@@ -59,6 +59,7 @@ interface RenderContext {
   defaultLocale: string; // the Site's own fallback (see LOCALIZATION.md)
   tokens: ThemeTokens; // already-resolved (base + overrides merged)
   media?: ReadonlyMap<string, FrozenMediaDescriptor>; // v0.5, see below
+  publicOnly?: boolean; // v0.6, see below
 }
 ```
 
@@ -82,6 +83,23 @@ one place this branch lives. `packages/renderer` doesn't depend on
 `packages/publishing`; `FrozenMediaDescriptor` is declared locally in
 `render-context.ts`, structurally compatible with (a subset of)
 `packages/publishing`'s `MediaDescriptor`.
+
+**`publicOnly` (v0.6):** the direct sibling of `media` above, for Rental
+_business_ data rather than frozen presentation. `true` only on
+`apps/web`'s public request pipeline (`site-page.ts`): domain-bound blocks
+(`property-summary`, `unit-grid`, `amenities`) then resolve
+Property/Unit rows through `@provence360/rentals`' public-scoped read
+functions (`getPublicProperty`/`getPublicUnit`/`listPublicUnitsForProperty`
+— gated on `isPublicPropertyStatus`/`isPublicUnitStatus`) and apply the
+Property's `locationDisclosure` filtering (see
+[docs/SITE_DOMAIN.md#public-vs-admin-visibility-v06](SITE_DOMAIN.md#public-vs-admin-visibility-v06))
+to any address shown. `undefined`/`false` (admin Draft preview,
+unchanged) sees the full live row regardless of status or disclosure — an
+owner previewing their own Site is not a guest. A `propertyId`/`unitId`
+that resolves under the unrestricted admin path but not the public one
+(draft, archived, or genuinely missing/cross-tenant) all degrade to the
+same `DomainReferenceUnavailable` placeholder under `publicOnly: true` —
+one failure mode, not three.
 
 ## Data loading and query count
 
