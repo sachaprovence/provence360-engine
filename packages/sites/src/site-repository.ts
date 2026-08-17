@@ -1,6 +1,7 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { AppTx, SiteStatus } from "@provence360/database";
 import { sites } from "@provence360/database";
+import { navigationSchema, type Navigation } from "@provence360/content";
 import { recordAuditLog } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import { themeOverridesSchema, type ThemeOverrides } from "@provence360/themes";
@@ -209,6 +210,68 @@ export async function updateSiteTheme(tx: AppTx, input: UpdateSiteThemeInput) {
       metadata: { overrideKeys: Object.keys(overrides) },
     });
   }
+
+  return row;
+}
+
+export interface UpdateSiteNavigationInput {
+  id: string;
+  /** Raw Draft-shaped input — validated here via `navigationSchema` before it ever reaches the database. */
+  navigation: unknown;
+  actorUserId?: string;
+  /** Optimistic-concurrency token — see {@link SiteConflictError}. */
+  expectedUpdatedAt?: Date;
+}
+
+/**
+ * Sets a Site's Draft navigation (v0.5, section 5/12 of the brief). This is
+ * *structural* validation only — `navigationSchema.parse` confirms the
+ * shape (discriminated target kinds, valid UUIDs, bounded depth/item
+ * count, unique ids) but cannot confirm a `{ kind: "page", pageId }`
+ * target actually names a real Page of this Site: JSONB has no foreign
+ * key, so that check is necessarily *referential*, not structural, and
+ * belongs at publish time (`packages/publishing`'s `assembleDraft`), the
+ * one place that already holds a consistent, single-transaction view of
+ * both the navigation and the Pages it might reference — see
+ * docs/PUBLISHING.md and section 12/13 of the v0.5 brief for why this
+ * split (and not a second read here) is what keeps this safe under
+ * concurrent edits.
+ */
+export async function updateSiteNavigation(tx: AppTx, input: UpdateSiteNavigationInput) {
+  const tenantId = requireCurrentTenantId();
+  const navigation: Navigation = navigationSchema.parse(input.navigation);
+
+  const [row] = await tx
+    .update(sites)
+    .set({ navigation })
+    .where(
+      input.expectedUpdatedAt
+        ? and(
+            eq(sites.id, input.id),
+            eq(sites.tenantId, tenantId),
+            eqUpdatedAtMs(sites.updatedAt, input.expectedUpdatedAt),
+          )
+        : and(eq(sites.id, input.id), eq(sites.tenantId, tenantId)),
+    )
+    .returning();
+  if (!row) {
+    if (input.expectedUpdatedAt) {
+      const [stillExists] = await tx
+        .select({ id: sites.id })
+        .from(sites)
+        .where(and(eq(sites.id, input.id), eq(sites.tenantId, tenantId)));
+      if (stillExists) throw new SiteConflictError(input.id);
+    }
+    throw new SiteNotFoundError(input.id);
+  }
+
+  await recordAuditLog(tx, {
+    ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
+    action: "SITE_NAVIGATION_UPDATED",
+    targetType: "site",
+    targetId: row.id,
+    metadata: { itemCount: navigation.items.length },
+  });
 
   return row;
 }

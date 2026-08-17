@@ -20,4 +20,5 @@ export const propertySummaryBlockV1: BlockDefinition<PropertySummaryProps> = {
   version: 1,
   schema: propertySummaryPropsSchema,
   capabilities: { domainBound: true },
+  references: (props) => [{ kind: "domain", domainType: "property", id: props.propertyId }],
 };

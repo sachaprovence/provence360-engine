@@ -18,4 +18,6 @@ export const heroBlockV1: BlockDefinition<HeroProps> = {
   version: 1,
   schema: heroPropsSchema,
   capabilities: { domainBound: false },
+  references: (props) =>
+    props.backgroundMediaId ? [{ kind: "media", id: props.backgroundMediaId }] : [],
 };

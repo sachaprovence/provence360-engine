@@ -1,10 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { AppTx } from "@provence360/database";
 import { siteRevisions, sitePublications, sites, users } from "@provence360/database";
+import { logger } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import { assembleDraft, type SiteSnapshot } from "./draft-snapshot";
 import type { PublishValidationIssue } from "./errors";
 import { SiteNotFoundError } from "./errors";
+import { parseSiteSnapshot } from "./site-snapshot";
 import { snapshotsEqual } from "./snapshot-equal";
 
 export interface DraftSummary {
@@ -48,8 +50,21 @@ export async function getDraftSummary(tx: AppTx, siteId: string): Promise<DraftS
         and(eq(siteRevisions.id, site.publishedRevisionId), eq(siteRevisions.tenantId, tenantId)),
       );
     if (revision) {
-      publishedSnapshot = revision.snapshot as SiteSnapshot;
-      publishedRevisionNumber = revision.revisionNumber;
+      try {
+        publishedSnapshot = parseSiteSnapshot(revision.snapshot);
+        publishedRevisionNumber = revision.revisionNumber;
+      } catch (error) {
+        // Same fail-closed contract as `getPublishedRevision`: an
+        // unparsable published snapshot must not crash the admin dashboard
+        // either — it's reported as "no unpublished-changes comparison
+        // available" (via the null below) rather than thrown.
+        logger.warn("publishing.revision.snapshot_invalid", {
+          tenantId,
+          siteId,
+          revisionId: site.publishedRevisionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

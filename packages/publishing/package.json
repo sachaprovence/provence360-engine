@@ -18,6 +18,7 @@
     "@provence360/content": "workspace:*",
     "@provence360/database": "workspace:*",
     "@provence360/observability": "workspace:*",
+    "@provence360/rentals": "workspace:*",
     "@provence360/tenant": "workspace:*",
     "@provence360/themes": "workspace:*",
     "@provence360/validation": "workspace:*",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@provence360/config": "workspace:*",
+    "@provence360/sites": "workspace:*",
     "@provence360/testkit": "workspace:*",
     "@types/node": "22.20.1",
     "eslint": "9.39.5",

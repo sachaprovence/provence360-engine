@@ -6,6 +6,7 @@ import { resolveTheme } from "@provence360/themes";
 import {
   attachUnitAmenity,
   createAmenity,
+  createMediaAsset,
   createProperty,
   createSite,
   createTenant,
@@ -14,8 +15,11 @@ import {
   resetDatabase,
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
+import { getAdminDb } from "@provence360/database/admin";
+import { mediaAssets } from "@provence360/database";
+import { eq } from "drizzle-orm";
 import { renderBlocks } from "./index";
-import type { RenderContext } from "./render-context";
+import type { FrozenMediaDescriptor, RenderContext } from "./render-context";
 
 beforeAll(async () => {
   await ensureTestDatabaseReady();
@@ -233,5 +237,75 @@ describe("renderBlocks", () => {
 
     expect(html).not.toContain("Tenant B Secret Villa");
     expect(html).toContain('data-block-unavailable="true"');
+  });
+
+  it("Hero/Gallery use the frozen manifest (context.media) when present, ignoring a live edit to the same MediaAsset row", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const asset = await createMediaAsset({ tenantId: tenant.id, storageKey: "live/current.jpg" });
+
+    // The frozen descriptor a Revision would have captured at publish time
+    // — deliberately DIFFERENT from the live row below, to prove the
+    // renderer prefers this over a fresh `tx` lookup when `context.media`
+    // is provided (v0.5, section 9 of the brief).
+    const frozen: FrozenMediaDescriptor = {
+      id: asset.id,
+      storageKey: "frozen/at-publish-time.jpg",
+      mimeType: "image/jpeg",
+      width: null,
+      height: null,
+      altText: "Frozen alt text",
+    };
+
+    // The live row changes AFTER the (simulated) freeze — same as a Draft
+    // edit happening after a publish.
+    await getAdminDb()
+      .update(mediaAssets)
+      .set({ storageKey: "live/edited-after-freeze.jpg" })
+      .where(eq(mediaAssets.id, asset.id));
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "hero",
+        version: 1,
+        props: { headline: { fr: "H" }, backgroundMediaId: asset.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      const context: RenderContext = {
+        ...contextFor(tenant.id, site.id, tx),
+        media: new Map([[asset.id, frozen]]),
+      };
+      const elements = await renderBlocks(content, context);
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("frozen/at-publish-time.jpg");
+    expect(html).not.toContain("live/edited-after-freeze.jpg");
+  });
+
+  it("Hero/Gallery fall back to a live lookup when context.media is absent (Draft preview semantics)", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
+    const asset = await createMediaAsset({ tenantId: tenant.id, storageKey: "live/preview.jpg" });
+
+    const content = [
+      {
+        id: generateBlockInstanceId(),
+        type: "hero",
+        version: 1,
+        props: { headline: { fr: "H" }, backgroundMediaId: asset.id },
+      },
+    ];
+
+    const html = await withTenantContext(tenant.id, async (tx) => {
+      // No `media` field at all — same shape apps/admin's preview page builds.
+      const elements = await renderBlocks(content, contextFor(tenant.id, site.id, tx));
+      return elements.map((el) => renderToStaticMarkup(el)).join("\n");
+    });
+
+    expect(html).toContain("live/preview.jpg");
   });
 });

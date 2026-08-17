@@ -1,8 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import type { AppTx } from "@provence360/database";
 import { siteRevisions, sites } from "@provence360/database";
+import { logger } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import type { SiteSnapshot } from "./draft-snapshot";
+import { parseSiteSnapshot } from "./site-snapshot";
 
 export interface PublishedRevisionResult {
   revisionId: string;
@@ -24,6 +26,13 @@ export interface PublishedRevisionResult {
  * distinguishable signal a visitor could use to tell "never published"
  * apart from "domain doesn't resolve") — never a fallback to draft
  * content (Invariant A/B).
+ *
+ * The stored `snapshot` JSONB is never trusted blindly (v0.5, section 7 of
+ * the brief) — `parseSiteSnapshot` is the one runtime trust boundary a
+ * Revision's snapshot passes through. A malformed document or an unknown
+ * `schemaVersion` fails closed exactly the same way a dangling pointer
+ * does: logged, treated as "nothing to render," never thrown up into a
+ * 500, and never a fallback to the Draft.
  */
 export async function getPublishedRevision(
   tx: AppTx,
@@ -48,9 +57,22 @@ export async function getPublishedRevision(
   // a rendering path silently doing the wrong thing is worse than a 404.
   if (!revision) return null;
 
+  let snapshot: SiteSnapshot;
+  try {
+    snapshot = parseSiteSnapshot(revision.snapshot);
+  } catch (error) {
+    logger.warn("publishing.revision.snapshot_invalid", {
+      tenantId,
+      siteId,
+      revisionId: revision.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+
   return {
     revisionId: revision.id,
     revisionNumber: revision.revisionNumber,
-    snapshot: revision.snapshot as SiteSnapshot,
+    snapshot,
   };
 }

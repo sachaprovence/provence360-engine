@@ -20,4 +20,5 @@ export const amenitiesBlockV1: BlockDefinition<AmenitiesProps> = {
   version: 1,
   schema: amenitiesPropsSchema,
   capabilities: { domainBound: true },
+  references: (props) => [{ kind: "domain", domainType: "unit", id: props.unitId }],
 };

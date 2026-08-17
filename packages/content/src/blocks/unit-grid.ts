@@ -19,4 +19,12 @@ export const unitGridBlockV1: BlockDefinition<UnitGridProps> = {
   version: 1,
   schema: unitGridPropsSchema,
   capabilities: { domainBound: true },
+  references: (props) => [
+    { kind: "domain", domainType: "property", id: props.propertyId },
+    ...(props.unitIds ?? []).map((id) => ({
+      kind: "domain" as const,
+      domainType: "unit" as const,
+      id,
+    })),
+  ],
 };

@@ -51,6 +51,23 @@ existing migration modified):
 - **Optimistic concurrency on draft edits** — `packages/content`/`packages/sites`' Page/Site mutation functions accept an opt-in `expectedUpdatedAt`, rejecting a stale write (`PageConflictError`/`SiteConflictError`) instead of silently overwriting a newer one. Every v0.3 call site is unaffected (the parameter is optional).
 - **`release.read`/`release.publish` wired up** — declared in v0.1/v0.2's permission catalog, unused until now. No new permissions were needed.
 
+## What Foundation v0.5 adds
+
+The Content & Site Composition Kernel — replacing the previously-opaque
+`SiteSnapshot["site"]["navigation"]: unknown` with a real, typed, publish-
+time-resolved contract, and closing the gap where a Revision's media
+appearance could silently drift after publish. See
+[ADR 0017](adr/0017-site-composition-kernel.md).
+
+- **Typed Draft navigation** (`packages/content`'s `navigationSchema`) — internal links reference a Page by stable `pageId`, external links reuse the existing `safeHrefSchema` allowlist. `packages/sites`' `updateSiteNavigation` validates the shape at write time.
+- **Resolved navigation at publish time** — `assembleDraft` resolves every `pageId` to the Page's `slug`, in the same single pass as everything else (no extra query, no new race). A Draft slug rename after publish never changes an already-published Revision's navigation.
+- **A generic block-reference mechanism** (`BlockDefinition.references`) — every block declares its own media/domain references; the composition pipeline needs no central switch over block types to know what to freeze or check.
+- **Frozen media manifests** — every MediaAsset a published Page's blocks/SEO reference is resolved and frozen (as a descriptor, never the binary) into the Revision. The public runtime renders from this frozen manifest, not a live lookup; Draft preview still uses a live lookup, correctly.
+- **Publish-time domain reference checks** — a `propertyId`/`unitId` a domain-bound block references must exist for the tenant, without freezing that row's own fields (Property/Unit/Amenity data stays entirely live, unchanged from v0.4).
+- **An explicitly-versioned snapshot format** (`schemaVersion: 2`) with a real runtime parser (`parseSiteSnapshot`) replacing the previous `revision.snapshot as SiteSnapshot` casts, and a normalization path for pre-v0.5 (v0.4) Revisions.
+- **The public runtime resolves any published Page**, not only home (`apps/web/app/[[...slug]]/page.tsx`) — a necessary consequence of resolved navigation actually going somewhere.
+- **SEO wired into rendered output for the first time** — `generateMetadata` reads title/description/canonical/robots/og:image from the published Revision's own `seo` field (the existing `seoSchema` contract, validated since v0.3 but never previously read by anything).
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -77,3 +94,4 @@ requirements a later phase hasn't settled yet:
 - **A platform super-admin.** Deliberately undesigned so far — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md) for why it needs its own identity concept rather than an extension of `MembershipRole`.
 - **No per-amenity metadata schema.** `unit_amenities.metadata` exists as a small JSONB escape hatch (e.g. `{ heated: true }` for a pool) but nothing validates or defines its shape per catalog entry yet — deliberately deferred until there's a second real consumer. See [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
 - **No component/block-level theme variants.** Only the token layer ships in v0.3 — see [docs/THEMES.md](THEMES.md).
+- **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).

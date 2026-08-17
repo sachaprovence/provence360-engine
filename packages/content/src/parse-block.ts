@@ -4,6 +4,7 @@ import {
   MalformedBlockEnvelopeError,
   UnknownBlockError,
   blockRegistry,
+  type BlockReference,
 } from "./block-registry";
 
 export interface ParsedBlock<TProps = unknown> {
@@ -65,4 +66,21 @@ export function parsePageContentStrict(raw: unknown): ParsedBlock[] {
     throw new MalformedBlockEnvelopeError("page content must be an array of block instances");
   }
   return raw.map((item) => parseBlockInstance(item));
+}
+
+/**
+ * The generic reference-extraction pass (v0.5, section 8 of the brief):
+ * looks up `block`'s `BlockDefinition` and calls its own `references`
+ * function, if it declared one. A block whose definition has since been
+ * removed from the registry, or that never declared `references` at all,
+ * simply contributes nothing — this mirrors `renderBlocks`' own
+ * degrade-gracefully-per-instance philosophy (docs/RENDERING.md#error-handling)
+ * rather than throwing, since reference extraction runs during publish
+ * validation (packages/publishing), which already has its own explicit
+ * "unknown block" issue from `parsePageContentStrict` at write time.
+ */
+export function extractBlockReferences(block: ParsedBlock): BlockReference[] {
+  const definition = blockRegistry.get(block.type, block.version);
+  if (!definition?.references) return [];
+  return [...definition.references(block.props)];
 }

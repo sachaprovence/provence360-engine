@@ -41,10 +41,14 @@ one-row edit in the right table.
 The JSONB columns here (`themeOverrides`, `navigation`, `features`) are
 all genuinely polymorphic _configuration_, each independently
 Zod-validated on write — never one giant unvalidated blob holding
-everything about the site. `navigation`/`features` are intentionally loose
-in v0.3 (no closed schema yet, matching how little uses them today); the
-one that actually gates behavior today (`themeOverrides`) is validated
-against a closed catalog, per [ADR 0011](adr/0011-theme-token-model.md).
+everything about the site. `themeOverrides` is validated against a closed
+token catalog (per [ADR 0011](adr/0011-theme-token-model.md));
+`navigation` gained its own closed, typed contract in v0.5 —
+`packages/content/src/navigation.ts`'s `navigationSchema` — see
+[ADR 0017](adr/0017-site-composition-kernel.md) and
+[docs/PUBLISHING.md#navigation-v05](PUBLISHING.md#navigation-v05).
+`features` remains intentionally loose (no closed schema yet, matching
+how little uses it today).
 
 ## Property and Unit
 
@@ -163,6 +167,21 @@ distinction drawn above (Property/Unit/Amenity referenced live vs. a
 Page's `content` snapshotted) is exactly what `packages/publishing`'s
 Revision snapshot implements, unchanged from this section's original
 design.
+
+**v0.5 update:** `MediaAsset` moves from "referenced live" to
+**snapshotted** — a Revision now freezes a `MediaDescriptor` copy (id,
+kind, storageKey, mimeType, width, height, altText — never the binary
+itself) of every MediaAsset any block/SEO field on its published Pages
+references, precisely because a printed brochure's _photo_ (unlike its
+phone number) is expected to stay exactly what was printed. The live
+`media_assets` row itself is still mutable — a tenant can still edit its
+`altText`/`storageKey` for future publishes — but an already-published
+Revision no longer changes when that happens. Navigation's internal
+`pageId` references are resolved (not snapshotted as ids) the same publish
+turn, for the same reason a slug rename must not retroactively change an
+old Revision. See
+[ADR 0017](adr/0017-site-composition-kernel.md) and
+[docs/PUBLISHING.md#media-v05](PUBLISHING.md#media-v05).
 
 ## Twelve invariants
 
