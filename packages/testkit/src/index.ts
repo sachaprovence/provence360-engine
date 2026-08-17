@@ -15,5 +15,6 @@ export {
   createTheme,
   createUnit,
   createUser,
+  createVirtualTour,
   publishRevisionForTest,
 } from "./factories";

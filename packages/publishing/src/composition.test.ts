@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mediaAssets } from "@provence360/database";
+import { mediaAssets, virtualTours, type VirtualTourProvider } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
 import { createPage } from "@provence360/content";
 import {
@@ -9,6 +9,7 @@ import {
   createSite,
   createTenant,
   createUnit,
+  createVirtualTour,
   ensureTestDatabaseReady,
   resetDatabase,
 } from "@provence360/testkit";
@@ -595,6 +596,159 @@ describe("Domain references: publish-time existence/tenant check (business data 
     if (result.valid) {
       const snapshotJson = JSON.stringify(result.snapshot);
       expect(snapshotJson).not.toContain("Villa X");
+    }
+  });
+});
+
+describe("v0.7 — VirtualTour domain references: publish-time existence/tenant/active/provider check", () => {
+  it("a valid, active, tenant-owned tourId is accepted", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "active",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: tour.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(true);
+  });
+
+  it("a nonexistent tourId is rejected at publish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    await seedHomePage(tenant.id, site.id, [
+      {
+        id: "b1",
+        type: "virtual-tour",
+        version: 1,
+        props: { tourId: "01a00000-0000-7000-8000-00000000dead" },
+      },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_missing")).toBe(true);
+    }
+  });
+
+  it("a cross-tenant tourId is rejected at publish", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const siteA = await createSite({ tenantId: tenantA.id });
+    const siteB = await createSite({ tenantId: tenantB.id });
+    const propertyB = await createProperty({ tenantId: tenantB.id, siteId: siteB.id });
+    const tourB = await createVirtualTour({
+      tenantId: tenantB.id,
+      propertyId: propertyB.id,
+      status: "active",
+    });
+    await seedHomePage(tenantA.id, siteA.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: tourB.id } },
+    ]);
+
+    const result = await withTenantContext(tenantA.id, (tx) => assembleDraft(tx, siteA.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_missing")).toBe(true);
+    }
+  });
+
+  it("a draft (not yet active) VirtualTour is rejected with domain_reference_not_active, distinct from domain_reference_missing", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const draftTour = await createVirtualTour({ tenantId: tenant.id, propertyId: property.id });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: draftTour.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_not_active")).toBe(true);
+      expect(result.issues.some((i) => i.code === "domain_reference_missing")).toBe(false);
+    }
+  });
+
+  it("an archived VirtualTour is likewise rejected at publish", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const archivedTour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "archived",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: archivedTour.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_not_active")).toBe(true);
+    }
+  });
+
+  it("a VirtualTour row with an unregistered provider (a corrupted/legacy row) is rejected with domain_reference_invalid", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "active",
+    });
+    // Simulates a row predating a provider's removal from the registry —
+    // not reachable through the repository's own createVirtualTour/
+    // updateVirtualTour (which always normalize through a registered
+    // provider), only via a raw admin write.
+    await getAdminDb()
+      .update(virtualTours)
+      // Deliberately outside the TS-level provider enum — simulating a row
+      // whose provider was since removed from the registry. Cast because
+      // Drizzle's generated type only allows currently-known provider
+      // literals; the database column itself has no such CHECK constraint.
+      .set({ provider: "not-a-real-provider" as VirtualTourProvider })
+      .where(eq(virtualTours.id, tour.id));
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: tour.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.issues.some((i) => i.code === "domain_reference_invalid")).toBe(true);
+    }
+  });
+
+  it("does not freeze the VirtualTour's own business fields into the snapshot — only the reference (Presentation frozen, Business live)", async () => {
+    const tenant = await createTenant();
+    const site = await createSite({ tenantId: tenant.id });
+    const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
+    const tour = await createVirtualTour({
+      tenantId: tenant.id,
+      propertyId: property.id,
+      status: "active",
+      publicName: "Visite Secrete",
+      providerAssetId: "secretasset",
+    });
+    await seedHomePage(tenant.id, site.id, [
+      { id: "b1", type: "virtual-tour", version: 1, props: { tourId: tour.id } },
+    ]);
+
+    const result = await withTenantContext(tenant.id, (tx) => assembleDraft(tx, site.id));
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      const snapshotJson = JSON.stringify(result.snapshot);
+      expect(snapshotJson).not.toContain("Visite Secrete");
+      expect(snapshotJson).not.toContain("secretasset");
     }
   });
 });

@@ -7,6 +7,7 @@ import { heroRendererV1 } from "./hero";
 import { propertySummaryRendererV1 } from "./property-summary";
 import { textRendererV1 } from "./text";
 import { unitGridRendererV1 } from "./unit-grid";
+import { virtualTourRendererV1 } from "./virtual-tour";
 
 // Registers a React renderer for every built-in `type@version` the
 // content package's own `blocks/index.ts` registers a schema for — same
@@ -20,3 +21,4 @@ registerBlockRenderer("cta", 1, ctaRendererV1);
 registerBlockRenderer("property-summary", 1, propertySummaryRendererV1);
 registerBlockRenderer("unit-grid", 1, unitGridRendererV1);
 registerBlockRenderer("amenities", 1, amenitiesRendererV1);
+registerBlockRenderer("virtual-tour", 1, virtualTourRendererV1);

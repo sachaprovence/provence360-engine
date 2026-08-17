@@ -222,6 +222,47 @@ are all proven end to end, not asserted against a stubbed auth layer. See
 [docs/AUTHENTICATION.md](AUTHENTICATION.md) and
 [docs/AUTHORIZATION.md](AUTHORIZATION.md).
 
+## VirtualTour embeds (v0.7)
+
+An `<iframe>` embed is, by construction, a window onto third-party
+content — this feature's entire design answers "how do we let an owner
+embed a real 360° tour without this becoming an arbitrary-content-
+injection primitive?" See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md)
+for the full reasoning; the security-relevant guarantees, specifically:
+
+- **A closed provider registry, never a generic iframe provider.**
+  `@provence360/virtual-tours`' `VirtualTourProviderDefinition` registry
+  has no "generic"/pass-through provider and no way to register one whose
+  `buildEmbedUrl` echoes a caller-supplied URL unchanged — every
+  registered provider is first-party code fully controlling what `src` a
+  VirtualTour can ever resolve to.
+- **Admin input is normalized before it ever reaches the database.**
+  `matterportProvider.normalize()` is a closed allowlist: exact host
+  (`my.matterport.com`), `https` only (rejecting `javascript:`/`data:`/
+  `blob:`/`http:` and lookalike-subdomain tricks), a valid-shaped 11-
+  character Model SID. The stored `providerAssetId` is always this
+  normalized value, never a raw pasted string.
+- **The rendered `src` is deterministic and first-party-constructed.**
+  `buildSafeVirtualTourEmbed` builds it fresh from the stored, normalized
+  id — the renderer (`packages/renderer`'s `virtual-tour.tsx`) never
+  touches `provider`/`providerAssetId` directly and contains no
+  provider-specific branch. No `dangerouslySetInnerHTML`, no stored HTML/
+  iframe string, anywhere in this feature.
+- **A CSP `frame-src` allowlist on both `apps/web` and `apps/admin`**,
+  restricted to exactly the registered providers' own origins — no
+  wildcards — set via each app's `next.config.mjs` `headers()`. This is
+  the actual enforced boundary against a hypothetical future bug in
+  `buildEmbedUrl`: even if application code somehow constructed a
+  non-Matterport `src`, the browser itself refuses to load it in a frame.
+  Kept in sync with the live provider registry by a dedicated test
+  (`packages/virtual-tours/src/csp-frame-origins.test.ts`), not by
+  hand-auditing two config files.
+- **No Matterport SDK, API key, OAuth flow, GraphQL client, or webhook
+  integration anywhere in this codebase.** The feature is a static,
+  deterministic URL construction from an admin-supplied identifier — no
+  server-side fetch to Matterport to "validate" a tour, no runtime
+  dependency on Matterport beyond the public embed URL itself.
+
 ## Known gaps (tracked, not hidden)
 
 - **No password-reset / email-verification flow.** A user is provisioned by an existing tenant OWNER/ADMIN or the seed script; there is no self-service "forgot password." See [docs/AUTHENTICATION.md](AUTHENTICATION.md).
@@ -233,3 +274,5 @@ are all proven end to end, not asserted against a stubbed auth layer. See
 - **No Draft/Release/Publish pipeline (v0.3).** Every Site Editor edit (a Page's metadata, a block's props, a Property/Unit field, a theme override) is live for every visitor immediately — there is no review, staging, or rollback step. See [docs/ROADMAP.md](ROADMAP.md) and [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility) for what's already designed to make adding one non-breaking.
 - **Plain text only for block copy (v0.3).** No rich-text/markup block exists yet — `text@1`'s `body` renders as escaped JSX text with `\n`-separated paragraphs, nothing else. A future rich-text block must be a structured, sanitized document model, never raw HTML passed through unchanged — see [docs/RENDERING.md#security](RENDERING.md#security).
 - **No real media upload/CDN pipeline (v0.3).** `media_assets.storageKey` is an opaque reference; there is no upload flow, image transform, or CDN integration behind it yet — see [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
+- **No click-to-load for VirtualTour embeds (v0.7).** The iframe mounts on render today; `posterMediaId` exists so a future click-to-load implementation needs no schema change, but nothing gates the third-party network request behind a visitor's explicit click yet. See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-10--deliberate-non-decisions).
+- **No `sandbox` attribute on the VirtualTour `<iframe>` (v0.7).** Matterport's own official embed snippet specifies none, and guessing a value without the ability to live-test against their actual Showcase JavaScript risks silently breaking the embed. The CSP `frame-src` allowlist above is the real, verified boundary for this feature.

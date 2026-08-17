@@ -17,6 +17,7 @@ import {
   unitAmenities,
   units,
   users,
+  virtualTours,
 } from "../schema";
 
 // Minimal, idempotent dev seed: two tenants ("Alpha" = Provence Sud, "Beta"
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
 
   console.log("Clearing existing data...");
   await db.execute(
-    sql`truncate table ${auditLogs}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
+    sql`truncate table ${auditLogs}, ${unitAmenities}, ${virtualTours}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
   );
 
   console.log("Seeding tenants...");
@@ -458,6 +459,31 @@ async function main(): Promise<void> {
     { tenantId: luberonRetreats.id, unitId: masUnit.id, amenityId: wifiAmenity.id },
   ]);
 
+  console.log("Seeding a demo VirtualTour (v0.7)...");
+  // One Property-level Matterport tour on Villa des Oliviers, wired into
+  // its home Page below via a `virtual-tour@1` block — the demo case for
+  // section 39 of the v0.7 brief. `providerAssetId` is a syntactically
+  // valid-shaped (11-character alphanumeric) demo Model SID, not a real,
+  // publicly browsable Matterport space — see
+  // packages/virtual-tours/src/providers/matterport.ts for the exact
+  // format this must match.
+  const [villaVirtualTour] = await db
+    .insert(virtualTours)
+    .values([
+      {
+        tenantId: provenceSud.id,
+        propertyId: villaDesOliviers.id,
+        provider: "matterport",
+        providerAssetId: "SxQL3iGyeYo",
+        internalName: "Visite virtuelle — Villa des Oliviers",
+        publicName: "Visite virtuelle 360°",
+        status: "active",
+        ordering: 0,
+      },
+    ])
+    .returning();
+  if (!villaVirtualTour) throw new Error("Failed to seed virtual tour");
+
   console.log("Seeding home Pages (Content Graph)...");
   // Two deliberately different block compositions and orders, rendered by
   // the exact same `packages/renderer` code and block registry — no
@@ -549,6 +575,12 @@ async function main(): Promise<void> {
             type: "unit-grid",
             version: 1,
             props: { propertyId: villaDesOliviers.id, columns: 2 },
+          },
+          {
+            id: blockId(),
+            type: "virtual-tour",
+            version: 1,
+            props: { tourId: villaVirtualTour.id, showTitle: true, aspectRatio: "16:9" },
           },
           {
             id: blockId(),
@@ -747,6 +779,7 @@ async function main(): Promise<void> {
   console.log(
     `  properties: villa-des-oliviers (${villaDesOliviers.id}), mas-du-luberon (${masDuLuberonProperty.id})`,
   );
+  console.log(`  virtual tours: villa-des-oliviers demo tour (${villaVirtualTour.id})`);
   console.log(
     `  login password for every seed user: "${SEED_PASSWORD}" (seed-only, see docs/AUTHENTICATION.md)`,
   );

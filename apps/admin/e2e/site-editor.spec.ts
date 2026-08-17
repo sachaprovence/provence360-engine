@@ -99,10 +99,14 @@ test.describe("Site Editor — properties, units, amenities", () => {
 
     await page.goto(`/admin/tenants/${tenantId}/sites/${siteId}/properties/${propertyId}`);
     await expect(page.getByRole("heading", { name: "Villa des Oliviers" })).toBeVisible();
-    await expect(page.getByText("Villa principale")).toBeVisible();
-    await expect(page.getByText("Studio annexe")).toBeVisible();
+    // Scoped to the Units table's own link — v0.7 added a "Virtual tours"
+    // Scope <select> further down the same page whose <option> values are
+    // Unit names, so an unscoped text match against "Villa principale" is
+    // now ambiguous between the two.
+    await expect(page.getByRole("link", { name: "Villa principale" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Studio annexe" })).toBeVisible();
 
-    await page.getByText("Villa principale").click();
+    await page.getByRole("link", { name: "Villa principale" }).click();
     await expect(page.getByRole("heading", { name: "Amenities" })).toBeVisible();
     // Exact match including the category suffix — the platform-level
     // amenity catalog (packages/rentals' `listAmenities`) is global, not
