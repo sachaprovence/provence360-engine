@@ -528,7 +528,7 @@ describe("v0.6 — public vs preview Rental visibility (RenderContext.publicOnly
 });
 
 describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
-  it("renders the resolved, first-party-constructed Matterport embed src, never a stored HTML/iframe string", async () => {
+  it("resolves the tour and renders the click-to-load surface — never an iframe (or its src) in the initial server-rendered HTML (v0.7.1)", async () => {
     const tenant = await createTenant();
     const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
     const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
@@ -554,10 +554,20 @@ describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
       return elements.map((el) => renderToStaticMarkup(el)).join("\n");
     });
 
+    // The tour resolved correctly (its name is server-rendered)...
     expect(html).toContain("Villa Panoramique");
-    expect(html).toContain("https://my.matterport.com/show/?m=abc12345678");
-    expect(html).toContain('loading="lazy"');
-    expect(html).toContain('allow="xr-spatial-tracking"');
+    // ...contextualized, not the bare "iframe"/"Matterport" a naive embed
+    // snippet would use...
+    expect(html).toContain("Visite virtuelle — Villa Panoramique");
+    // ...the click-to-load trigger is present...
+    expect(html).toContain("Démarrer la visite virtuelle");
+    // ...but no `<iframe>`, and therefore no Matterport `src`, exists
+    // anywhere in the page until a visitor actually interacts — see
+    // `apps/web/e2e/virtual-tour.spec.ts` for the real-browser proof that
+    // clicking mounts an iframe whose `src` is exactly this deterministic,
+    // first-party-constructed URL.
+    expect(html).not.toContain("<iframe");
+    expect(html).not.toContain("https://my.matterport.com/show/?m=abc12345678");
   });
 
   it("hides a draft Tour publicly but shows it in preview (RenderContext.publicOnly)", async () => {
@@ -638,14 +648,28 @@ describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
     expect(afterHtml).toContain('data-block-unavailable="true"');
   });
 
-  it("Presentation-Frozen / Business-Live boundary: an admin repointing the Tour's target asset after publish reflects immediately, without a republish", async () => {
+  it("Presentation-Frozen / Business-Live boundary: an admin editing the Tour's live data (its public name) after publish reflects immediately, without a republish", async () => {
+    // v0.7.1 note: the previous version of this test mutated
+    // `providerAssetId` and asserted on the resulting `src` string in the
+    // server-rendered HTML — no longer possible now that the iframe (and
+    // therefore its `src`) doesn't exist in the DOM until a visitor
+    // clicks (click-to-load, section 2 of the v0.7.1 brief). The
+    // renderer-level guarantee this test proves — an unmodified block
+    // config resolves the VirtualTour row fresh, live, on every render —
+    // is unchanged and is proven here via `publicName` instead, which
+    // (unlike `providerAssetId`) is still always present in the initial
+    // server-rendered HTML (the heading and the embed's `title`/
+    // `aria-label`). The asset-id-specific case — a repointed tour's
+    // `src` changing after the visitor clicks — is proven end-to-end in
+    // `apps/web/e2e/virtual-tour.spec.ts`, which can actually observe a
+    // real mounted iframe's `src`.
     const tenant = await createTenant();
     const site = await createSite({ tenantId: tenant.id, slug: "s", name: "S" });
     const property = await createProperty({ tenantId: tenant.id, siteId: site.id });
     const tour = await createVirtualTour({
       tenantId: tenant.id,
       propertyId: property.id,
-      providerAssetId: "original111",
+      publicName: "Nom Original",
       status: "active",
     });
     const frozenBlockConfig = [
@@ -661,11 +685,11 @@ describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
       const elements = await renderBlocks(frozenBlockConfig, contextFor(tenant.id, site.id, tx));
       return elements.map((el) => renderToStaticMarkup(el)).join("\n");
     });
-    expect(beforeHtml).toContain("original111");
+    expect(beforeHtml).toContain("Nom Original");
 
     await getAdminDb()
       .update(virtualTours)
-      .set({ providerAssetId: "repointed11" })
+      .set({ publicName: "Nom Modifié" })
       .where(eq(virtualTours.id, tour.id));
 
     const afterHtml = await withTenantContext(tenant.id, async (tx) => {
@@ -674,8 +698,8 @@ describe("v0.7 — VirtualTour block (virtual-tour@1)", () => {
       const elements = await renderBlocks(frozenBlockConfig, contextFor(tenant.id, site.id, tx));
       return elements.map((el) => renderToStaticMarkup(el)).join("\n");
     });
-    expect(afterHtml).toContain("repointed11");
-    expect(afterHtml).not.toContain("original111");
+    expect(afterHtml).toContain("Nom Modifié");
+    expect(afterHtml).not.toContain("Nom Original");
   });
 
   it("a VirtualTour block referencing another tenant's Tour never leaks that tenant's data", async () => {

@@ -106,11 +106,26 @@ unchanged. See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md).
 - **A minimal admin CRUD surface** on the Property page — create/list/change-status/remove, with a live status `<select>` (not a form submit) demonstrating that archiving a Tour removes it from the public site immediately.
 - **No Matterport SDK, API key, OAuth, GraphQL client, or webhook integration anywhere** — the entire feature is deterministic, first-party-constructed URL building from an admin-supplied identifier.
 
+## What Foundation v0.7.1 adds
+
+Virtual Tour Experience & Embed Hardening — a production-hardening pass
+over v0.7's functional baseline, with no schema migration. See
+[ADR 0020](adr/0020-virtual-tour-experience-hardening.md).
+
+- **Click-to-load by default, public and preview alike.** No `<iframe>` mounts until a visitor clicks "Démarrer la visite virtuelle" — no hidden iframe, no preconnect, no provider script, no server-side Matterport fetch before that click.
+- **An explicit state machine** (`idle`/`loading`/`loaded`/`error`), extracted into a pure, framework-agnostic reducer, unit-tested for the hard cases (a late load after timeout, a late timeout after success, independent multi-instance state) with plain `vitest` — no jsdom added.
+- **A centralized, cancellable load timeout** with retry-via-remount (a fresh `attempt` forces a fresh `<iframe>` element, never a stuck one).
+- **Accessibility hardening** — contextualized `title`/`aria-label` (never bare "iframe"/"Matterport"), no focus loss when the trigger button unmounts, keyboard-only operable, `aria-live` scoped to the loading state only.
+- **`referrerPolicy="no-referrer"`** on the eventually-mounted iframe.
+- **A real `sandbox` study**, concluding (same outcome as v0.7, now with actual reasoning) that the attribute stays absent — see the ADR for why.
+- **`packages/renderer`'s and the public runtime's first `"use client"` component**, isolated to exactly the interactive click/timeout/retry surface — all tenant-scoped data resolution stays server-side.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
 requirements a later phase hasn't settled yet:
 
+- **Matterport SDK, programmatic room navigation, Mattertags, the Matterport floorplans/metrics APIs, Matterport sync/webhooks/OAuth/account management, tour generation, 360° upload, other panorama providers (Kuula/CloudPano/3DVista), WebXR, native VR, a proprietary panorama viewer, or a homemade 3D engine.** v0.7.1 hardens the existing static-embed experience only — see [ADR 0020](adr/0020-virtual-tour-experience-hardening.md).
 - **Scheduled/future-dated publishing, a Revision diff view, or per-object (not per-tenant) preview links.** See [docs/PUBLISHING.md#risks--deliberately-out-of-scope](PUBLISHING.md#risks--deliberately-out-of-scope).
 - **The booking engine.** No availability, pricing, or reservation flow — the entire reason this platform exists, and still entirely out of scope.
 - **An AI content generator.** None — content is authored by hand through the Site Editor.
@@ -133,5 +148,4 @@ requirements a later phase hasn't settled yet:
 - **No component/block-level theme variants.** Only the token layer ships in v0.3 — see [docs/THEMES.md](THEMES.md).
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
 - **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.
-- **No click-to-load for VirtualTour embeds.** v0.7 delivered `posterMediaId` (a poster image reference) specifically so a future click-to-load implementation needs no schema change, but the iframe itself always mounts on render today — deliberately deferred, see [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-10--deliberate-non-decisions).
 - **VirtualTour provider count: one (Matterport).** The registry is designed for a second provider to be a pure addition (one new `VirtualTourProviderDefinition` + one `register()` call, no other call site changes) — but only Matterport is registered today, matching the brief's own scope.

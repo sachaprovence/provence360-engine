@@ -190,6 +190,15 @@ already-published Revision — see [ADR 0019](adr/0019-virtual-tour-immersive-ke
   from "text an admin typed" to "iframe `src`" that skips normalization.
   See [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md) and
   [docs/SECURITY.md#virtualtour-embeds-v07](SECURITY.md#virtualtour-embeds-v07).
+  **v0.7.1:** the iframe no longer mounts on render — a click-to-load
+  surface (`VirtualTourEmbed`, `packages/renderer`'s and the public
+  runtime's first `"use client"` component) shows a cover/CTA state
+  instead, and only mounts the `<iframe>` after the visitor explicitly
+  clicks. `virtual-tour.tsx` itself is still a plain async server
+  component doing all the tenant-scoped resolution; only the interactive
+  click/timeout/retry logic is client-side, receiving nothing but the
+  already-safe `src`/`title` strings. See
+  [ADR 0020](adr/0020-virtual-tour-experience-hardening.md).
 - **Every href is validated at write time**, not just escaped at render
   time. `packages/validation/src/safe-url.ts`'s `safeHrefSchema` — used by
   every block with a link (`hero.ctaHref`, `cta.buttonHref`) — is a closed
