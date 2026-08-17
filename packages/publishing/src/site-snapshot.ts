@@ -22,10 +22,13 @@ import {
 // the renderer.
 
 /** Bumped whenever the *shape* `assembleDraft` freezes into a new Revision changes incompatibly. */
-export const SNAPSHOT_SCHEMA_VERSION = 3 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 4 as const;
 
-/** The immediately-prior schema version — still readable (see `parseSiteSnapshot`'s v2 branch), never writable. */
-const PREVIOUS_SNAPSHOT_SCHEMA_VERSION = 2 as const;
+/** The immediately-prior schema version — still readable (see `parseSiteSnapshot`'s v3 branch), never writable. */
+const PREVIOUS_SNAPSHOT_SCHEMA_VERSION = 3 as const;
+
+/** One version further back than {@link PREVIOUS_SNAPSHOT_SCHEMA_VERSION} — still readable (see `parseSiteSnapshot`'s v2 branch), never writable. */
+const V2_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 
 // --- Media -------------------------------------------------------------
 //
@@ -37,6 +40,22 @@ const PREVIOUS_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 // this is what makes an already-published Revision immune to a later edit
 // of the same MediaAsset row's `altText`/`storageKey`/etc.
 
+// v0.9 — Media Ingestion, Asset Lifecycle & Delivery Kernel (see
+// docs/adr/0022-media-ingestion-asset-delivery.md). A frozen copy of a
+// generated variant's own descriptor — deliberately declared locally
+// rather than imported from `@provence360/media`, the identical reasoning
+// `packages/renderer`'s `FrozenMediaDescriptor` already documents for
+// staying dependency-free of the packages that produce the data it
+// freezes: `packages/publishing` must never depend on the *ingestion*
+// package, only read the columns `packages/media` already wrote to
+// `media_assets`.
+const mediaVariantEntrySchema = z.object({
+  storageKey: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  byteSize: z.number().int().positive(),
+});
+
 export const mediaDescriptorSchema = z.object({
   id: uuidSchema,
   kind: z.enum(mediaKindValues),
@@ -45,6 +64,26 @@ export const mediaDescriptorSchema = z.object({
   width: z.number().int().nullable(),
   height: z.number().int().nullable(),
   altText: z.string().nullable(),
+  // Both optional: absent for a legacy/normalized-forward descriptor (no
+  // fingerprint/variant data ever existed for it — a pre-v0.9 MediaAsset,
+  // or one created by direct seed/test insertion bypassing the real
+  // ingestion pipeline); present for anything resolved through v0.9's
+  // `resolveMediaManifest`. `checksumSha256` doubles as the delivery
+  // URL's fingerprint segment (see `@provence360/media`'s delivery
+  // module) — different bytes always produce a different URL.
+  checksumSha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  byteSize: z.number().int().positive().optional(),
+  variants: z
+    .object({
+      thumbnail: mediaVariantEntrySchema.optional(),
+      small: mediaVariantEntrySchema.optional(),
+      medium: mediaVariantEntrySchema.optional(),
+      large: mediaVariantEntrySchema.optional(),
+    })
+    .optional(),
 });
 export type MediaDescriptor = z.infer<typeof mediaDescriptorSchema>;
 
@@ -142,7 +181,7 @@ export const siteSnapshotThemeSchema = z.object({
  * for how the renderer treats each case differently.
  */
 const siteSnapshotV2Schema = z.object({
-  schemaVersion: z.literal(PREVIOUS_SNAPSHOT_SCHEMA_VERSION),
+  schemaVersion: z.literal(V2_SNAPSHOT_SCHEMA_VERSION),
   site: siteSnapshotSiteSchema,
   theme: siteSnapshotThemeSchema,
   pages: z.array(siteSnapshotPageSchema),
@@ -150,12 +189,31 @@ const siteSnapshotV2Schema = z.object({
 });
 
 /**
- * v0.8 — adds `branding`, the resolved (`DEFAULT_SITE_BRANDING` + Site's
+ * v0.8 — added `branding`, the resolved (`DEFAULT_SITE_BRANDING` + Site's
  * own overrides) `SiteBrandingV1`, frozen the same way `theme.tokens`
  * already is — see docs/adr/0021-site-theme-branding-design-system.md.
- * Everything else is byte-for-byte the v2 shape.
+ * Kept internal (not exported) purely to parse historical v3 Revisions —
+ * see `siteSnapshotV4Schema` below for the current shape.
  */
-export const siteSnapshotV3Schema = z.object({
+const siteSnapshotV3Schema = z.object({
+  schemaVersion: z.literal(PREVIOUS_SNAPSHOT_SCHEMA_VERSION),
+  site: siteSnapshotSiteSchema,
+  theme: siteSnapshotThemeSchema,
+  branding: siteBrandingV1Schema,
+  pages: z.array(siteSnapshotPageSchema),
+  media: z.array(mediaDescriptorSchema),
+});
+
+/**
+ * v0.9 — no field was added or removed relative to v3; `mediaDescriptorSchema`
+ * itself grew new *optional* fields (`checksumSha256`/`byteSize`/`variants`)
+ * shared across every version, so a v3 Revision's `media` array already
+ * validates against this schema unchanged (its entries simply lack the new
+ * keys). The version is still bumped, and an explicit v3 -> v4 upgrade
+ * branch still exists below, per the same discipline every prior schema
+ * change in this codebase follows — see ADR 0022, "publishing snapshot."
+ */
+export const siteSnapshotV4Schema = z.object({
   schemaVersion: z.literal(SNAPSHOT_SCHEMA_VERSION),
   site: siteSnapshotSiteSchema,
   theme: siteSnapshotThemeSchema,
@@ -171,7 +229,7 @@ export interface SiteSnapshot {
   /** Always present after normalization — a pre-v0.8 Revision is upgraded to {@link DEFAULT_SITE_BRANDING} at read time (see `parseSiteSnapshot`), never left absent. */
   branding: SiteBrandingV1;
   pages: SiteSnapshotPage[];
-  /** `undefined` only for a normalized legacy (pre-v0.5) Revision — see the field comment on {@link siteSnapshotV3Schema}. */
+  /** `undefined` only for a normalized legacy (pre-v0.5) Revision — see the field comment on {@link siteSnapshotV4Schema}. */
   media?: MediaDescriptor[];
 }
 
@@ -253,6 +311,25 @@ function normalizeV2Snapshot(v2: z.infer<typeof siteSnapshotV2Schema>): SiteSnap
   };
 }
 
+/**
+ * v0.9 — a v3 Revision's `media` entries already validate against the
+ * (shared, now-extended) `mediaDescriptorSchema` unchanged; they simply
+ * have no `checksumSha256`/`byteSize`/`variants` (those keys are
+ * optional). Relabeling `schemaVersion` is the entire upgrade — there is
+ * no data to backfill, matching the fact that no *shape* actually changed
+ * between v3 and v4 (see `siteSnapshotV4Schema`'s own doc comment).
+ */
+function normalizeV3Snapshot(v3: z.infer<typeof siteSnapshotV3Schema>): SiteSnapshot {
+  return {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    site: v3.site,
+    theme: v3.theme,
+    branding: v3.branding,
+    pages: v3.pages,
+    media: v3.media,
+  };
+}
+
 export class InvalidSnapshotError extends Error {
   constructor(reason: string) {
     super(`Revision snapshot is malformed: ${reason}`);
@@ -293,7 +370,7 @@ export function parseSiteSnapshot(raw: unknown): SiteSnapshot {
     return normalizeLegacySnapshot(legacy.data);
   }
 
-  if (schemaVersion === PREVIOUS_SNAPSHOT_SCHEMA_VERSION) {
+  if (schemaVersion === V2_SNAPSHOT_SCHEMA_VERSION) {
     const parsedV2 = siteSnapshotV2Schema.safeParse(raw);
     if (!parsedV2.success) {
       throw new InvalidSnapshotError(parsedV2.error.issues[0]?.message ?? "unknown error");
@@ -301,11 +378,19 @@ export function parseSiteSnapshot(raw: unknown): SiteSnapshot {
     return normalizeV2Snapshot(parsedV2.data);
   }
 
+  if (schemaVersion === PREVIOUS_SNAPSHOT_SCHEMA_VERSION) {
+    const parsedV3 = siteSnapshotV3Schema.safeParse(raw);
+    if (!parsedV3.success) {
+      throw new InvalidSnapshotError(parsedV3.error.issues[0]?.message ?? "unknown error");
+    }
+    return normalizeV3Snapshot(parsedV3.data);
+  }
+
   if (schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     throw new UnknownSnapshotVersionError(schemaVersion);
   }
 
-  const parsed = siteSnapshotV3Schema.safeParse(raw);
+  const parsed = siteSnapshotV4Schema.safeParse(raw);
   if (!parsed.success) {
     throw new InvalidSnapshotError(parsed.error.issues[0]?.message ?? "unknown error");
   }

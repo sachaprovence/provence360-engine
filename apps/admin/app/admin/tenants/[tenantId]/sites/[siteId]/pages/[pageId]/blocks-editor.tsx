@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import {
   buttonStyle,
   dangerButtonStyle,
@@ -9,6 +9,7 @@ import {
   secondaryButtonStyle,
   textareaStyle,
 } from "@/lib/form-styles";
+import { GalleryMediaPicker, MediaPicker, type MediaPickerOption } from "@/lib/media-picker";
 import {
   removeBlockAction,
   reorderBlocksAction,
@@ -25,27 +26,93 @@ export interface BlockRow {
 
 const initialState: FormActionState = {};
 
+/** Best-effort read of a string/string[] field out of the props JSON currently in the textarea — never throws, since the textarea may transiently hold invalid JSON while the admin is mid-edit. */
+function readPropsField(propsText: string, key: string): unknown {
+  try {
+    const parsed = JSON.parse(propsText) as Record<string, unknown>;
+    return parsed[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function patchPropsField(propsText: string, key: string, value: unknown): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(propsText) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  if (value === "" || value === undefined) {
+    delete parsed[key];
+  } else {
+    parsed[key] = value;
+  }
+  return JSON.stringify(parsed, null, 2);
+}
+
 function BlockPropsForm({
   tenantId,
   siteId,
   pageId,
   block,
+  mediaOptions,
 }: {
   tenantId: string;
   siteId: string;
   pageId: string;
   block: BlockRow;
+  mediaOptions: readonly MediaPickerOption[];
 }) {
   const [state, formAction, isPending] = useActionState(
     updateBlockPropsAction.bind(null, tenantId, siteId, pageId, block.id),
     initialState,
   );
+  // Controlled, not `defaultValue`: the Hero/Gallery media pickers below
+  // patch this same JSON text on selection (brief §18) — the textarea
+  // stays the single source of truth and remains directly editable for
+  // every other field (localized headline/caption text, CTA href, etc.),
+  // so nothing about the pre-existing generic block editor regresses.
+  const [propsText, setPropsText] = useState(() => JSON.stringify(block.props, null, 2));
+
+  const backgroundMediaId =
+    block.type === "hero"
+      ? (readPropsField(propsText, "backgroundMediaId") as string | undefined)
+      : undefined;
+  const galleryIdsRaw =
+    block.type === "gallery" ? readPropsField(propsText, "mediaAssetIds") : undefined;
+  const galleryIds = Array.isArray(galleryIdsRaw)
+    ? galleryIdsRaw.filter((id): id is string => typeof id === "string")
+    : [];
 
   return (
     <form action={formAction} style={{ display: "grid", gap: 6 }}>
+      {block.type === "hero" ? (
+        <MediaPicker
+          label="Background image"
+          options={mediaOptions}
+          defaultValue={backgroundMediaId}
+          onChange={(id) => {
+            setPropsText((current) => patchPropsField(current, "backgroundMediaId", id));
+          }}
+        />
+      ) : null}
+      {block.type === "gallery" ? (
+        <GalleryMediaPicker
+          label="Images"
+          options={mediaOptions}
+          selectedIds={galleryIds}
+          onChange={(ids) => {
+            setPropsText((current) => patchPropsField(current, "mediaAssetIds", ids));
+          }}
+        />
+      ) : null}
       <textarea
         name="props"
-        defaultValue={JSON.stringify(block.props, null, 2)}
+        value={propsText}
+        onChange={(event) => {
+          setPropsText(event.target.value);
+        }}
         style={textareaStyle}
       />
       <div>
@@ -75,12 +142,14 @@ export function BlocksEditor({
   pageId,
   blocks,
   canEdit,
+  mediaOptions,
 }: {
   tenantId: string;
   siteId: string;
   pageId: string;
   blocks: readonly BlockRow[];
   canEdit: boolean;
+  mediaOptions: readonly MediaPickerOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -160,7 +229,13 @@ export function BlocksEditor({
             ) : null}
           </div>
           {canEdit ? (
-            <BlockPropsForm tenantId={tenantId} siteId={siteId} pageId={pageId} block={block} />
+            <BlockPropsForm
+              tenantId={tenantId}
+              siteId={siteId}
+              pageId={pageId}
+              block={block}
+              mediaOptions={mediaOptions}
+            />
           ) : (
             <pre style={{ ...textareaStyle, background: "#f9fafb" }}>
               {JSON.stringify(block.props, null, 2)}

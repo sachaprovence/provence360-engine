@@ -11,6 +11,27 @@ import type { SiteBrandingV1, ThemeTokens } from "@provence360/themes";
  * frozen descriptor object built anywhere else in the codebase is already
  * assignable here by structure.
  */
+// v0.9 — Media Ingestion, Asset Lifecycle & Delivery Kernel (see
+// docs/adr/0022-media-ingestion-asset-delivery.md). Declared locally for
+// the identical reason `FrozenMediaDescriptor` itself is: no
+// `packages/renderer -> packages/media` dependency, structurally
+// compatible with the shape both `packages/media`'s own
+// `MediaVariantsV1` and `packages/publishing`'s (version-stripped)
+// `MediaDescriptor.variants` already produce.
+export interface FrozenMediaVariantEntry {
+  storageKey: string;
+  width: number;
+  height: number;
+  byteSize: number;
+}
+
+export interface FrozenMediaVariants {
+  thumbnail?: FrozenMediaVariantEntry | undefined;
+  small?: FrozenMediaVariantEntry | undefined;
+  medium?: FrozenMediaVariantEntry | undefined;
+  large?: FrozenMediaVariantEntry | undefined;
+}
+
 export interface FrozenMediaDescriptor {
   id: string;
   storageKey: string;
@@ -18,6 +39,13 @@ export interface FrozenMediaDescriptor {
   width: number | null;
   height: number | null;
   altText: string | null;
+  // v0.9, all optional: absent for a pre-v0.9/legacy asset (no fingerprint
+  // or variant data was ever generated for it). `checksumSha256` doubles
+  // as the delivery URL's fingerprint segment — see
+  // `packages/renderer/src/resolve-delivery-url.ts`.
+  checksumSha256?: string | null | undefined;
+  byteSize?: number | null | undefined;
+  variants?: FrozenMediaVariants | null | undefined;
 }
 
 /**

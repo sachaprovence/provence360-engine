@@ -18,6 +18,7 @@ import {
   type SiteBrandingV1,
 } from "@provence360/themes/branding";
 import { buttonStyle, errorTextStyle, inputStyle, labelStyle } from "@/lib/form-styles";
+import { MediaPicker, type MediaPickerOption } from "@/lib/media-picker";
 import { updateSiteBrandingAction, type BrandingFormActionState } from "./actions";
 
 const initialState: BrandingFormActionState = {};
@@ -91,12 +92,12 @@ export function SiteBrandingForm({
   tenantId,
   siteId,
   branding,
-  mediaAssets,
+  mediaOptions,
 }: {
   tenantId: string;
   siteId: string;
   branding: SiteBrandingV1;
-  mediaAssets: ReadonlyArray<{ id: string; storageKey: string; altText: string | null }>;
+  mediaOptions: readonly MediaPickerOption[];
 }) {
   const [state, formAction, isPending] = useActionState(
     updateSiteBrandingAction.bind(null, tenantId, siteId),
@@ -118,51 +119,24 @@ export function SiteBrandingForm({
               style={inputStyle}
             />
           </label>
-          <label style={labelStyle}>
-            Logo
-            <select
-              name="logoMediaId"
-              defaultValue={branding.brand.logo?.mediaId ?? ""}
-              style={inputStyle}
-            >
-              <option value="">— none —</option>
-              {mediaAssets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.altText ?? asset.storageKey}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={labelStyle}>
-            Logo (dark backgrounds)
-            <select
-              name="logoDarkMediaId"
-              defaultValue={branding.brand.logoDark?.mediaId ?? ""}
-              style={inputStyle}
-            >
-              <option value="">— none —</option>
-              {mediaAssets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.altText ?? asset.storageKey}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={labelStyle}>
-            Favicon
-            <select
-              name="faviconMediaId"
-              defaultValue={branding.brand.favicon?.mediaId ?? ""}
-              style={inputStyle}
-            >
-              <option value="">— none —</option>
-              {mediaAssets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.altText ?? asset.storageKey}
-                </option>
-              ))}
-            </select>
-          </label>
+          <MediaPicker
+            name="logoMediaId"
+            label="Logo"
+            defaultValue={branding.brand.logo?.mediaId}
+            options={mediaOptions}
+          />
+          <MediaPicker
+            name="logoDarkMediaId"
+            label="Logo (dark backgrounds)"
+            defaultValue={branding.brand.logoDark?.mediaId}
+            options={mediaOptions}
+          />
+          <MediaPicker
+            name="faviconMediaId"
+            label="Favicon"
+            defaultValue={branding.brand.favicon?.mediaId}
+            options={mediaOptions}
+          />
         </div>
       </fieldset>
 

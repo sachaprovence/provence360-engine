@@ -85,6 +85,24 @@ one place this branch lives. `packages/renderer` doesn't depend on
 `render-context.ts`, structurally compatible with (a subset of)
 `packages/publishing`'s `MediaDescriptor`.
 
+**Responsive delivery (v0.9):** whichever way a `FrozenMediaDescriptor`
+was resolved (live `tx` lookup or the frozen manifest above), Hero and
+Gallery both pass it through the same `resolveResponsiveImage`
+(`packages/renderer/src/resolve-delivery-url.ts`) before rendering — one
+pure function, no `isPreview` branch here either. When the descriptor
+carries a `checksumSha256` (a real v0.9-ingested asset), it picks the
+largest generated variant as `src` and builds a real `srcSet`/pixel-width
+list from the generated derivatives; when absent (a legacy/seed asset with
+no fingerprint) it falls back byte-for-byte to the pre-v0.9 behavior of
+using the raw `storageKey` directly — a dedicated non-regression test
+covers exactly this fallback. Gallery additionally sets `loading="lazy"`
+and a `sizes` attribute (it's never the page's LCP element); Hero renders
+its resolved `src` inside a CSS `background: url(...)` (unchanged
+architecture, still zero client JS). See
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md) and
+[docs/MEDIA.md](MEDIA.md) for the delivery URL/cache-header contract this
+`src` actually points at.
+
 **`branding` (v0.8):** the Site's own resolved brand identity — colors,
 typography, logo/favicon references, button/section style — a second,
 additive layer next to `tokens` (see

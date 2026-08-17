@@ -3,6 +3,7 @@ import { resolveLocalizedString } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
 import { resolveMediaDescriptor } from "../resolve-media";
 import { resolveButtonStyle } from "../resolve-branding";
+import { resolveResponsiveImage } from "../resolve-delivery-url";
 
 export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, context }) => {
   const t = context.tokens;
@@ -26,6 +27,12 @@ export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, cont
   const background = props.backgroundMediaId
     ? await resolveMediaDescriptor(props.backgroundMediaId, context)
     : null;
+  // v0.9 — resolves through the same-origin delivery route when the asset
+  // has real fingerprint/variant data (see resolve-delivery-url.ts);
+  // transparently falls back to the raw storageKey for a legacy/seed
+  // asset that predates the ingestion pipeline, exactly the pre-v0.9
+  // behavior.
+  const backgroundSrc = background ? resolveResponsiveImage(background).src : null;
 
   return (
     <section
@@ -34,8 +41,8 @@ export const heroRendererV1: BlockRenderer<HeroProps> = async ({ id, props, cont
       style={{
         padding: t["spacing.large"],
         borderRadius: t["radius.large"],
-        background: background
-          ? `${t["color.surface"]} url(${background.storageKey}) center/cover`
+        background: backgroundSrc
+          ? `${t["color.surface"]} url(${backgroundSrc}) center/cover`
           : t["color.surface"],
         color: t["color.text"],
         textAlign: "center",

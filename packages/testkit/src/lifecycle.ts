@@ -5,6 +5,7 @@ import {
   auditLogs,
   domains,
   mediaAssets,
+  mediaUploads,
   memberships,
   pages,
   properties,
@@ -83,6 +84,6 @@ export async function resetDatabase(): Promise<void> {
   assertTestEnvironment();
   const db = getAdminDb();
   await db.execute(
-    sql`truncate table ${auditLogs}, ${sitePublications}, ${siteRevisions}, ${unitSleepingArrangements}, ${propertyAmenities}, ${unitAmenities}, ${virtualTours}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
+    sql`truncate table ${auditLogs}, ${sitePublications}, ${siteRevisions}, ${unitSleepingArrangements}, ${propertyAmenities}, ${unitAmenities}, ${virtualTours}, ${units}, ${properties}, ${pages}, ${mediaUploads}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
   );
 }

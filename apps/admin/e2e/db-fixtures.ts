@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { loadDotEnv, pages, properties, sites, tenants, virtualTours } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
 
@@ -69,12 +69,21 @@ export async function virtualTourIdByPublicName(publicName: string): Promise<str
 }
 
 export async function homePageIdForSite(siteId: string): Promise<string> {
+  // Filtered to the actual home page (slug === "", this codebase's own
+  // convention — see docs/CONTENT_MODEL.md) rather than an unordered,
+  // unfiltered `SELECT` — a shared fixture like "villas-cassis" can
+  // legitimately accumulate several Pages across repeated E2E runs (some
+  // specs deliberately create extra ones, e.g. site-editor.spec.ts's "OWNER
+  // can create a new page"), and Postgres gives no ordering guarantee for a
+  // query with neither an ORDER BY nor a unique filter — a previously
+  // "usually works" assumption that a growing, real dev database can
+  // eventually violate.
   const [row] = await getAdminDb()
     .select({ id: pages.id })
     .from(pages)
-    .where(eq(pages.siteId, siteId));
+    .where(and(eq(pages.siteId, siteId), eq(pages.slug, "")));
   if (!row) {
-    throw new Error(`No page found for site "${siteId}" — run \`pnpm db:seed\` first.`);
+    throw new Error(`No home page found for site "${siteId}" — run \`pnpm db:seed\` first.`);
   }
   return row.id;
 }

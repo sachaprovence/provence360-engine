@@ -10,7 +10,7 @@ export {
   parseSiteSnapshot,
   resolvedNavigationSchema,
   resolvedNavigationTargetSchema,
-  siteSnapshotV3Schema,
+  siteSnapshotV4Schema,
 } from "./site-snapshot";
 export type {
   MediaDescriptor,

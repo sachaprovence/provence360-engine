@@ -5,6 +5,7 @@ import { getDraftSummary } from "@provence360/publishing";
 import { getSite } from "@provence360/sites";
 import { listThemes, resolveSiteBranding } from "@provence360/themes";
 import { withTenantPage } from "@/lib/actor";
+import { resolveMediaThumbnail } from "@/lib/media-thumbnail";
 import { SiteBrandingForm } from "./site-branding-form";
 import { SiteSettingsForm } from "./site-settings-form";
 import { SiteThemeForm } from "./site-theme-form";
@@ -47,6 +48,16 @@ export default async function SiteDetailPage({
   });
 
   if (!site) notFound();
+
+  const mediaOptions = mediaList.map((asset) => {
+    const thumbnail = resolveMediaThumbnail(asset);
+    return {
+      id: thumbnail.id,
+      previewUrl: thumbnail.previewUrl,
+      altText: thumbnail.altText,
+      originalFilename: thumbnail.originalFilename,
+    };
+  });
 
   const base = `/admin/tenants/${tenantId}/sites/${siteId}`;
 
@@ -118,7 +129,7 @@ export default async function SiteDetailPage({
           tenantId={tenantId}
           siteId={siteId}
           branding={resolveSiteBranding(site.branding)}
-          mediaAssets={mediaList}
+          mediaOptions={mediaOptions}
         />
       ) : (
         <p style={{ color: "#6b7280", fontSize: 14 }}>
