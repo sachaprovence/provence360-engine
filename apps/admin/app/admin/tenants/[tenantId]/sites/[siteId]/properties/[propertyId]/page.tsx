@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProperty, listUnitsForProperty } from "@provence360/rentals";
+import {
+  getProperty,
+  listAmenities,
+  listAmenitiesForProperty,
+  listUnitsForProperty,
+} from "@provence360/rentals";
 import { withTenantPage } from "@/lib/actor";
 import { tableStyle, tdStyle, thStyle } from "@/lib/form-styles";
 import { CreateUnitForm } from "./create-unit-form";
+import { PropertyAmenitiesForm } from "./property-amenities-form";
 import { PropertyEditForm } from "./property-edit-form";
 
 export const dynamic = "force-dynamic";
@@ -15,16 +21,21 @@ export default async function PropertyDetailPage({
 }) {
   const { tenantId, siteId, propertyId } = await params;
 
-  const { property, unitList, canUpdate, canCreateUnit } = await withTenantPage(
-    tenantId,
-    "property.read",
-    async (tx, actor) => ({
-      property: await getProperty(tx, propertyId),
-      unitList: await listUnitsForProperty(tx, propertyId),
-      canUpdate: actor.permissions.has("property.update"),
-      canCreateUnit: actor.permissions.has("unit.create"),
-    }),
-  );
+  const {
+    property,
+    unitList,
+    propertyAmenityCatalog,
+    propertyAmenityAttached,
+    canUpdate,
+    canCreateUnit,
+  } = await withTenantPage(tenantId, "property.read", async (tx, actor) => ({
+    property: await getProperty(tx, propertyId),
+    unitList: await listUnitsForProperty(tx, propertyId),
+    propertyAmenityCatalog: await listAmenities(tx),
+    propertyAmenityAttached: await listAmenitiesForProperty(tx, propertyId),
+    canUpdate: actor.permissions.has("property.update"),
+    canCreateUnit: actor.permissions.has("unit.create"),
+  }));
 
   if (!property || property.siteId !== siteId) notFound();
 
@@ -53,7 +64,24 @@ export default async function PropertyDetailPage({
         </p>
       )}
 
-      <h2 style={{ fontSize: 16, marginBottom: 8 }}>Units</h2>
+      <h2 style={{ fontSize: 16, marginBottom: 8 }}>Property amenities</h2>
+      {canUpdate ? (
+        <PropertyAmenitiesForm
+          tenantId={tenantId}
+          siteId={siteId}
+          propertyId={propertyId}
+          catalog={propertyAmenityCatalog}
+          attachedIds={propertyAmenityAttached.map((a) => a.amenityId)}
+        />
+      ) : (
+        <ul style={{ fontSize: 14, color: "#374151", marginBottom: 20 }}>
+          {propertyAmenityAttached.map((amenity) => (
+            <li key={amenity.amenityId}>{amenity.label}</li>
+          ))}
+        </ul>
+      )}
+
+      <h2 style={{ fontSize: 16, marginBottom: 8, marginTop: 20 }}>Units</h2>
       {canCreateUnit ? (
         <CreateUnitForm tenantId={tenantId} siteId={siteId} propertyId={propertyId} />
       ) : null}

@@ -11,6 +11,7 @@ import {
   pgRole,
   pgTable,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -517,6 +518,28 @@ export type PropertyType = (typeof propertyTypeValues)[number];
 export const propertyStatusValues = ["draft", "active", "archived"] as const;
 export type PropertyStatus = (typeof propertyStatusValues)[number];
 
+// A tri-state, not a boolean: "not specified by the owner" (NULL) must stay
+// distinguishable from an explicit "not allowed" — collapsing the two would
+// silently turn "the owner hasn't said" into "forbidden," which is a
+// fabricated fact this codebase's "unknown ≠ zero/false" philosophy (see
+// `units.maxGuests`/`bedrooms` above) already rejects for numeric fields.
+// `on_request` is a real third state (common in short-term rental listings:
+// "pets on request"), not just UI sugar over allowed/not_allowed.
+export const rentalPolicyValues = ["allowed", "not_allowed", "on_request"] as const;
+export type RentalPolicy = (typeof rentalPolicyValues)[number];
+
+// v0.6 guest-facing location-privacy disclosure (section 8/13 of the
+// brief). Defaults to "exact" specifically so existing seeded Properties'
+// already-rendered address keeps rendering unchanged after this migration
+// — a silent behavior change on upgrade would be worse than requiring an
+// owner to opt into hiding their address. "approximate" exposes
+// city/region/country only; "hidden" exposes no location fields at all.
+// See `packages/rentals/src/guest-view.ts` for where this is enforced —
+// deliberately server-side, not merely UI-hidden, so a renderer bug can
+// never leak a private address (docs/adr/0018-rental-domain-guest-experience.md).
+export const locationDisclosureValues = ["exact", "approximate", "hidden"] as const;
+export type LocationDisclosure = (typeof locationDisclosureValues)[number];
+
 export const properties = pgTable(
   "properties",
   {
@@ -549,6 +572,27 @@ export const properties = pgTable(
     // needs to override it per property.
     timezone: text("timezone"),
     status: text("status", { enum: propertyStatusValues }).notNull().default("draft"),
+    // v0.6 Guest Experience fields (section 6/8 of the brief). Plain
+    // Postgres `time` columns (not `text`), so "14:00" is validated and
+    // compared by Postgres itself, locale-independently — never a raw
+    // string a caller could hand in as "2pm" or "14h00". Nullable: "not
+    // specified" is a real, distinct state from any particular time (same
+    // reasoning as every other nullable capacity column on `units`).
+    checkInTime: time("check_in_time"),
+    checkOutTime: time("check_out_time"),
+    // Deliberately NOT constrained to `quietHoursStart < quietHoursEnd` — a
+    // quiet window legitimately wraps midnight (e.g. 22:00 -> 08:00), which
+    // is the common case, not an edge case, so an ordering CHECK would
+    // reject the very values this field exists to hold. Only "both set or
+    // both null" is enforced (see `properties_quiet_hours_pair_ck` below).
+    quietHoursStart: time("quiet_hours_start"),
+    quietHoursEnd: time("quiet_hours_end"),
+    smokingPolicy: text("smoking_policy", { enum: rentalPolicyValues }),
+    petsPolicy: text("pets_policy", { enum: rentalPolicyValues }),
+    eventsPolicy: text("events_policy", { enum: rentalPolicyValues }),
+    locationDisclosure: text("location_disclosure", { enum: locationDisclosureValues })
+      .notNull()
+      .default("exact"),
     ...timestamps,
   },
   (t) => [
@@ -561,6 +605,11 @@ export const properties = pgTable(
       foreignColumns: [sites.tenantId, sites.id],
       name: "properties_tenant_site_fk",
     }).onDelete("cascade"),
+    // Same both-null-or-both-set shape as `units_size_requires_unit_ck`.
+    check(
+      "properties_quiet_hours_pair_ck",
+      sql`(${t.quietHoursStart} is null and ${t.quietHoursEnd} is null) or (${t.quietHoursStart} is not null and ${t.quietHoursEnd} is not null)`,
+    ),
     pgPolicy("tenant_isolation_properties", {
       for: "all",
       to: appRole,
@@ -641,6 +690,73 @@ export const units = pgTable(
 ).enableRLS();
 
 // ---------------------------------------------------------------------------
+// unit_sleeping_arrangements — v0.6: a Unit's sleeping spaces as individual,
+// orderable rows ("Bedroom 1: 1 king bed", "Living room: 1 sofa bed"),
+// replacing the crude `units.beds` aggregate for any Unit detailed enough
+// to have them. Relational, not JSONB (section 9/10 of the brief): each row
+// has a real per-row identity for individual create/update/delete, a stable
+// `ordering` column the same way `units.ordering` already works, and full
+// tenant isolation via RLS — none of which JSONB can express as cleanly.
+//
+// Aggregates-vs-detail coherence (section 10): `units.beds` remains the
+// fallback total when no detail rows exist for a Unit; whenever detail rows
+// do exist, the *sum of their quantities* is the effective bed count for
+// display, and `units.beds` is treated as stale/advisory for that Unit. See
+// `packages/rentals/src/guest-view.ts`'s `effectiveBedCount` and
+// docs/adr/0018-rental-domain-guest-experience.md — this is a deliberate
+// choice to make "beds: 3" vs. "detail rows summing to 5" impossible to
+// display simultaneously, rather than reconciling or validating the two
+// against each other at write time.
+// ---------------------------------------------------------------------------
+export const bedTypeValues = [
+  "single",
+  "double",
+  "queen",
+  "king",
+  "bunk",
+  "sofa_bed",
+  "floor_mattress",
+  "crib",
+  "other",
+] as const;
+export type BedType = (typeof bedTypeValues)[number];
+
+export const unitSleepingArrangements = pgTable(
+  "unit_sleeping_arrangements",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    unitId: uuid("unit_id").notNull(),
+    // e.g. "Bedroom 1", "Living room" — nullable: a small Unit may just
+    // have "1 queen bed" with no meaningful room subdivision to name.
+    roomLabel: text("room_label"),
+    bedType: text("bed_type", { enum: bedTypeValues }).notNull(),
+    quantity: integer("quantity").notNull().default(1),
+    ordering: integer("ordering").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("unit_sleeping_arrangements_tenant_id_id_uidx").on(t.tenantId, t.id),
+    index("unit_sleeping_arrangements_tenant_id_idx").on(t.tenantId),
+    index("unit_sleeping_arrangements_unit_id_idx").on(t.unitId),
+    foreignKey({
+      columns: [t.tenantId, t.unitId],
+      foreignColumns: [units.tenantId, units.id],
+      name: "unit_sleeping_arrangements_tenant_unit_fk",
+    }).onDelete("cascade"),
+    check("unit_sleeping_arrangements_quantity_positive_ck", sql`${t.quantity} > 0`),
+    pgPolicy("tenant_isolation_unit_sleeping_arrangements", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
 // unit_amenities — join table asserting "this Unit has this (catalog)
 // Amenity." `amenity_id` references the global, non-tenant-scoped
 // `amenities` catalog directly (no tenant check needed — the catalog isn't
@@ -676,6 +792,52 @@ export const unitAmenities = pgTable(
       name: "unit_amenities_tenant_unit_fk",
     }).onDelete("cascade"),
     pgPolicy("tenant_isolation_unit_amenities", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// property_amenities — v0.6: the same join shape as `unit_amenities`, one
+// level up (section 11 of the brief: Amenities were Unit-only; a Property
+// itself can have its own amenities — e.g. "shared pool," "on-site
+// parking" — distinct from any one Unit's amenities). Deliberately a
+// separate table, not a nullable `unitId`-or-`propertyId` column on
+// `unit_amenities`: that would turn one FK/RLS-clean join table into two
+// mutually-exclusive-but-not-enforced shapes sharing one table, which is a
+// worse invariant to maintain than a second, identically-shaped table.
+// Reuses the same global Amenity catalog — no separate "property amenity
+// catalog" was created (section 11 explicitly warns against this).
+// ---------------------------------------------------------------------------
+export const propertyAmenities = pgTable(
+  "property_amenities",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    propertyId: uuid("property_id").notNull(),
+    amenityId: uuid("amenity_id")
+      .notNull()
+      .references(() => amenities.id, { onDelete: "restrict" }),
+    // Same minimal, validated shape as `unit_amenities.metadata` — see
+    // `packages/rentals/src/validation.ts`'s `amenityMetadataSchema`.
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("property_amenities_property_amenity_uidx").on(t.propertyId, t.amenityId),
+    index("property_amenities_tenant_id_idx").on(t.tenantId),
+    index("property_amenities_property_id_idx").on(t.propertyId),
+    foreignKey({
+      columns: [t.tenantId, t.propertyId],
+      foreignColumns: [properties.tenantId, properties.id],
+      name: "property_amenities_tenant_property_fk",
+    }).onDelete("cascade"),
+    pgPolicy("tenant_isolation_property_amenities", {
       for: "all",
       to: appRole,
       using: tenantMatch,

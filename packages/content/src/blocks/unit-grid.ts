@@ -10,6 +10,12 @@ export const unitGridPropsSchema = z.object({
   propertyId: uuidSchema,
   unitIds: z.array(uuidSchema).max(50).optional(),
   columns: z.number().int().min(1).max(4).default(3),
+  // v0.6, optional/defaulted-false: shows each card's effective bed count
+  // (structured sleeping-arrangement detail when present, else the raw
+  // `beds` aggregate — see `packages/rentals`' `buildUnitGuestView`).
+  // Omitted on any already-stored `@1` instance keeps today's card layout
+  // unchanged, so this is a non-breaking addition.
+  showBedSummary: z.boolean().default(false),
 });
 
 export type UnitGridProps = z.infer<typeof unitGridPropsSchema>;

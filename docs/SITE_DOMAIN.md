@@ -95,6 +95,22 @@ reasoning. The shape:
     single-Unit case (Mas du Luberon: 1 Unit) — modeled identically, not
     as two different shapes.
 
+**v0.6 update — Guest Experience fields:** `Property` gained
+`checkInTime`/`checkOutTime`/`quietHoursStart`/`quietHoursEnd` (native
+Postgres `time`, locale-independent), `smokingPolicy`/`petsPolicy`/
+`eventsPolicy` (a tri-state `allowed | not_allowed | on_request`, nullable
+— "not specified" stays distinguishable from "not allowed," the same
+unknown-≠-zero philosophy as `maxGuests`/`bedrooms`), and
+`locationDisclosure` (`exact | approximate | hidden`, `NOT NULL DEFAULT
+'exact'` — never breaks an already-seeded Property's rendered address).
+`Unit` gained a structured detail table, `unit_sleeping_arrangements`
+(room label, bed type, quantity, ordering) — the raw `beds` column stays
+as the fallback aggregate when no detail rows exist. See
+[ADR 0018](adr/0018-rental-domain-guest-experience.md) for the full
+reasoning, including the hybrid aggregates-vs-detail strategy and why
+`quietHoursStart`/`quietHoursEnd` have no ordering CHECK (a window
+legitimately wraps midnight).
+
 ## Amenities
 
 A governed, platform-level catalog (`amenities`: `key`, `category`
@@ -105,6 +121,15 @@ has this catalog Amenity," with an optional per-attachment `metadata`
 JSONB column (e.g. `{ heated: true }` for a pool) left deliberately
 unschema'd in v0.3 — see [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md)
 for why a per-amenity metadata schema is explicitly not built yet.
+
+**v0.6 update:** `metadata` now has a real (small, `.strict()`) Zod schema
+— `packages/rentals/src/validation.ts`'s `amenityMetadataSchema`, `{
+featured?: boolean, note?: string }` — applied uniformly on write, closing
+the gap noted above. Amenities are no longer Unit-only: `property_amenities`
+is a second, identically-shaped join table (`this Property has this
+catalog Amenity`) for facts that belong to the whole Property rather than
+one Unit (a shared pool, on-site parking). See
+[ADR 0018](adr/0018-rental-domain-guest-experience.md).
 
 ## MediaAsset
 
@@ -137,6 +162,29 @@ lookup is scoped to the current tenant, so a stale or cross-tenant
 reference resolves to nothing rather than leaking — see
 [docs/RENDERING.md](RENDERING.md#error-handling) and
 [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
+
+## Public vs. admin visibility (v0.6)
+
+A Property/Unit's `status` governs two independent audiences differently:
+the admin UI always shows every row a tenant owns, regardless of status —
+an owner must be able to see and edit a `draft` Property they're still
+setting up, or an `archived` one they've retired. The **public** runtime
+must never show either. Before v0.6 this filtering was inconsistent:
+`unit-grid.tsx` applied it inline; `property-summary.tsx`/`amenities.tsx`
+applied none at all — an archived Property still rendered its full public
+name and address.
+
+v0.6 makes this one explicit, named boundary: `isPublicPropertyStatus`
+(`status === "active"`) and `isPublicUnitStatus` (`active` or
+`not_bookable_separately`), exported from `packages/rentals`, with public-
+scoped read functions (`getPublicProperty`, `getPublicUnit`,
+`listPublicUnitsForProperty`) layered on top of the unrestricted ones —
+never a duplicated query. The renderer selects between them via
+`RenderContext.publicOnly` (the direct sibling of v0.5's
+`RenderContext.media` — see [ADR 0017](adr/0017-site-composition-kernel.md)),
+set `true` only by `apps/web`'s public request pipeline. See
+[ADR 0018](adr/0018-rental-domain-guest-experience.md) for the full
+reasoning and its interaction with publish-time validation.
 
 ## Future Release compatibility
 
@@ -182,6 +230,17 @@ turn, for the same reason a slug rename must not retroactively change an
 old Revision. See
 [ADR 0017](adr/0017-site-composition-kernel.md) and
 [docs/PUBLISHING.md#media-v05](PUBLISHING.md#media-v05).
+
+**v0.6 update:** Property/Unit/Amenity data stays exactly "referenced,
+safely" — nothing here changes. What v0.6 adds is a **visibility filter on
+the live read itself** (see "Public vs. admin visibility" above): a
+Property/Unit that's no longer public is still referenced correctly by an
+old Revision's frozen presentation, but the live lookup that presentation
+resolves against now returns nothing for it publicly. This is the
+concrete mechanism behind the worked example this section's reasoning
+implies: a Property later archived stays a valid reference, but a visitor
+loading that old Revision sees `DomainReferenceUnavailable`, not stale
+public data for a Property the owner has since retired.
 
 ## Twelve invariants
 

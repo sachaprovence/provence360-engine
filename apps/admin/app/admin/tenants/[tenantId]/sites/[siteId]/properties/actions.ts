@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   createProperty,
+  createSleepingArrangement,
   createUnit,
   deleteProperty,
+  deleteSleepingArrangement,
   deleteUnit,
+  setPropertyAmenities,
   setUnitAmenities,
   updateProperty,
   updateUnit,
@@ -22,6 +25,15 @@ function propertiesBasePath(tenantId: string, siteId: string): string {
   return `/admin/tenants/${tenantId}/sites/${siteId}/properties`;
 }
 
+/** See the doc comment at its one call site in `updatePropertyAction`. */
+function omitUndefinedKeys<T extends object>(
+  obj: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+  };
+}
+
 const propertyTypeSchema = z.enum([
   "villa",
   "house",
@@ -31,6 +43,15 @@ const propertyTypeSchema = z.enum([
   "apartment",
   "other",
 ]);
+
+// v0.6 — see packages/rentals/src/validation.ts's `timeOfDaySchema`/
+// `rentalPolicySchema`/`locationDisclosureSchema` (this form's own copy,
+// same shape, since apps/admin builds its own narrow per-form Zod schemas
+// rather than importing packages/rentals' broader input schemas — same
+// pre-existing convention as `propertyTypeSchema` above).
+const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Expected "HH:MM"');
+const rentalPolicySchema = z.enum(["allowed", "not_allowed", "on_request"]);
+const locationDisclosureSchema = z.enum(["exact", "approximate", "hidden"]);
 
 const createPropertySchema = z.object({
   publicName: z.string().trim().min(1).max(200),
@@ -87,11 +108,28 @@ export async function createPropertyAction(
 }
 
 const updatePropertySchema = z.object({
+  internalName: z.string().trim().min(1).max(200).optional(),
   publicName: z.string().trim().min(1).max(200).optional(),
   propertyType: propertyTypeSchema.optional(),
+  addressLine1: z.string().trim().max(200).optional(),
+  addressLine2: z.string().trim().max(200).optional(),
   addressCity: z.string().trim().max(200).optional(),
+  addressPostalCode: z.string().trim().max(20).optional(),
+  addressRegion: z.string().trim().max(120).optional(),
+  addressCountry: z.string().trim().max(2).optional(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  timezone: z.string().trim().max(64).optional(),
   description: z.string().trim().max(5000).optional(),
   status: z.enum(["draft", "active", "archived"]).optional(),
+  checkInTime: timeOfDaySchema.optional(),
+  checkOutTime: timeOfDaySchema.optional(),
+  quietHoursStart: timeOfDaySchema.optional(),
+  quietHoursEnd: timeOfDaySchema.optional(),
+  smokingPolicy: rentalPolicySchema.optional(),
+  petsPolicy: rentalPolicySchema.optional(),
+  eventsPolicy: rentalPolicySchema.optional(),
+  locationDisclosure: locationDisclosureSchema.optional(),
 });
 
 export async function updatePropertyAction(
@@ -101,12 +139,30 @@ export async function updatePropertyAction(
   _prevState: FormActionState,
   formData: FormData,
 ): Promise<FormActionState> {
+  const field = (name: string) => formData.get(name)?.toString() || undefined;
   const parsed = updatePropertySchema.safeParse({
-    publicName: formData.get("publicName")?.toString() || undefined,
-    propertyType: formData.get("propertyType")?.toString() || undefined,
-    addressCity: formData.get("addressCity")?.toString() || undefined,
-    description: formData.get("description")?.toString() || undefined,
-    status: formData.get("status")?.toString() || undefined,
+    internalName: field("internalName"),
+    publicName: field("publicName"),
+    propertyType: field("propertyType"),
+    addressLine1: field("addressLine1"),
+    addressLine2: field("addressLine2"),
+    addressCity: field("addressCity"),
+    addressPostalCode: field("addressPostalCode"),
+    addressRegion: field("addressRegion"),
+    addressCountry: field("addressCountry"),
+    latitude: field("latitude"),
+    longitude: field("longitude"),
+    timezone: field("timezone"),
+    description: field("description"),
+    status: field("status"),
+    checkInTime: field("checkInTime"),
+    checkOutTime: field("checkOutTime"),
+    quietHoursStart: field("quietHoursStart"),
+    quietHoursEnd: field("quietHoursEnd"),
+    smokingPolicy: field("smokingPolicy"),
+    petsPolicy: field("petsPolicy"),
+    eventsPolicy: field("eventsPolicy"),
+    locationDisclosure: field("locationDisclosure"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
 
@@ -114,13 +170,12 @@ export async function updatePropertyAction(
     await withTenantPage(tenantId, "property.update", (tx, actor) =>
       updateProperty(tx, {
         id: propertyId,
-        ...(parsed.data.publicName !== undefined ? { publicName: parsed.data.publicName } : {}),
-        ...(parsed.data.propertyType !== undefined
-          ? { propertyType: parsed.data.propertyType }
-          : {}),
-        ...(parsed.data.addressCity !== undefined ? { addressCity: parsed.data.addressCity } : {}),
-        ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
-        ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+        // Zod's parsed output keeps every optional key present, set to
+        // `undefined`, when the form omitted it — `omitUndefinedKeys`
+        // strips those back out so `updateProperty`'s own `...rest` spread
+        // never passes an explicit `undefined` into Drizzle's `.set()`
+        // (which would otherwise write SQL NULL to an untouched column).
+        ...omitUndefinedKeys(parsed.data),
         actorUserId: actor.userId,
       }),
     );
@@ -132,6 +187,18 @@ export async function updatePropertyAction(
 
   revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}`);
   return {};
+}
+
+export async function setPropertyAmenitiesAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  amenityIds: readonly string[],
+): Promise<void> {
+  await withTenantPage(tenantId, "property.update", (tx) =>
+    setPropertyAmenities(tx, propertyId, amenityIds),
+  );
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}`);
 }
 
 export async function deletePropertyAction(
@@ -200,12 +267,25 @@ export async function createUnitAction(
   return {};
 }
 
-const updateUnitSchema = z.object({
-  publicName: z.string().trim().min(1).max(200).optional(),
-  maxGuests: z.coerce.number().int().min(1).max(100).optional(),
-  bedrooms: z.coerce.number().int().min(0).max(50).optional(),
-  status: z.enum(["draft", "active", "archived", "not_bookable_separately"]).optional(),
-});
+const updateUnitSchema = z
+  .object({
+    internalName: z.string().trim().min(1).max(200).optional(),
+    publicName: z.string().trim().min(1).max(200).optional(),
+    maxGuests: z.coerce.number().int().min(1).max(100).optional(),
+    bedrooms: z.coerce.number().int().min(0).max(50).optional(),
+    beds: z.coerce.number().int().min(0).max(100).optional(),
+    bathrooms: z.coerce.number().min(0).max(100).multipleOf(0.5).optional(),
+    size: z.coerce.number().positive().max(100_000).optional(),
+    sizeUnit: z.enum(["sqm", "sqft"]).optional(),
+    description: z.string().trim().max(5000).optional(),
+    status: z.enum(["draft", "active", "archived", "not_bookable_separately"]).optional(),
+  })
+  // Mirrors the database's own `units_size_requires_unit_ck` — a clean
+  // form error instead of a raw constraint-violation.
+  .refine((v) => (v.size === undefined) === (v.sizeUnit === undefined), {
+    message: "size and sizeUnit must both be set, or both left blank",
+    path: ["sizeUnit"],
+  });
 
 export async function updateUnitAction(
   tenantId: string,
@@ -215,11 +295,18 @@ export async function updateUnitAction(
   _prevState: FormActionState,
   formData: FormData,
 ): Promise<FormActionState> {
+  const field = (name: string) => formData.get(name)?.toString() || undefined;
   const parsed = updateUnitSchema.safeParse({
-    publicName: formData.get("publicName")?.toString() || undefined,
-    maxGuests: formData.get("maxGuests")?.toString() || undefined,
-    bedrooms: formData.get("bedrooms")?.toString() || undefined,
-    status: formData.get("status")?.toString() || undefined,
+    internalName: field("internalName"),
+    publicName: field("publicName"),
+    maxGuests: field("maxGuests"),
+    bedrooms: field("bedrooms"),
+    beds: field("beds"),
+    bathrooms: field("bathrooms"),
+    size: field("size"),
+    sizeUnit: field("sizeUnit"),
+    description: field("description"),
+    status: field("status"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
 
@@ -227,10 +314,7 @@ export async function updateUnitAction(
     await withTenantPage(tenantId, "unit.update", (tx, actor) =>
       updateUnit(tx, {
         id: unitId,
-        ...(parsed.data.publicName !== undefined ? { publicName: parsed.data.publicName } : {}),
-        ...(parsed.data.maxGuests !== undefined ? { maxGuests: parsed.data.maxGuests } : {}),
-        ...(parsed.data.bedrooms !== undefined ? { bedrooms: parsed.data.bedrooms } : {}),
-        ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+        ...omitUndefinedKeys(parsed.data),
         actorUserId: actor.userId,
       }),
     );
@@ -264,5 +348,66 @@ export async function setUnitAmenitiesAction(
   amenityIds: readonly string[],
 ): Promise<void> {
   await withTenantPage(tenantId, "unit.update", (tx) => setUnitAmenities(tx, unitId, amenityIds));
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}/units/${unitId}`);
+}
+
+const bedTypeSchema = z.enum([
+  "single",
+  "double",
+  "queen",
+  "king",
+  "bunk",
+  "sofa_bed",
+  "floor_mattress",
+  "crib",
+  "other",
+]);
+
+const createSleepingArrangementSchema = z.object({
+  roomLabel: z.string().trim().min(1).max(120).optional(),
+  bedType: bedTypeSchema,
+  quantity: z.coerce.number().int().min(1).max(50).default(1),
+  ordering: z.coerce.number().int().min(0).max(10_000).default(0),
+});
+
+export async function createSleepingArrangementAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  unitId: string,
+  _prevState: FormActionState,
+  formData: FormData,
+): Promise<FormActionState> {
+  const parsed = createSleepingArrangementSchema.safeParse({
+    roomLabel: formData.get("roomLabel")?.toString() || undefined,
+    bedType: formData.get("bedType")?.toString() || undefined,
+    quantity: formData.get("quantity")?.toString() || undefined,
+    ordering: formData.get("ordering")?.toString() || undefined,
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+
+  await withTenantPage(tenantId, "unit.update", (tx) =>
+    createSleepingArrangement(tx, {
+      unitId,
+      bedType: parsed.data.bedType,
+      quantity: parsed.data.quantity,
+      ordering: parsed.data.ordering,
+      ...(parsed.data.roomLabel !== undefined ? { roomLabel: parsed.data.roomLabel } : {}),
+    }),
+  );
+  revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}/units/${unitId}`);
+  return {};
+}
+
+export async function deleteSleepingArrangementAction(
+  tenantId: string,
+  siteId: string,
+  propertyId: string,
+  unitId: string,
+  sleepingArrangementId: string,
+): Promise<void> {
+  await withTenantPage(tenantId, "unit.update", (tx) =>
+    deleteSleepingArrangement(tx, sleepingArrangementId),
+  );
   revalidatePath(`${propertiesBasePath(tenantId, siteId)}/${propertyId}/units/${unitId}`);
 }

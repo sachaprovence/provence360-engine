@@ -47,7 +47,9 @@ its own:
    independent of whether layers 1–2 were even reached. See below.
 4. **Composite foreign keys** — every child table with a real parent
    (`properties`, `units`, `unit_amenities`, `pages` in v0.3;
-   `site_revisions`, `site_publications` in v0.4) carries a foreign key on
+   `site_revisions`, `site_publications` in v0.4;
+   `unit_sleeping_arrangements`, `property_amenities` in v0.6) carries a
+   foreign key on
    `(tenant_id, parent_id)` against its parent's own `UNIQUE (tenant_id,
 id)` index, not just a plain `parent_id` FK. A row whose `tenant_id`
    doesn't match its parent's owner is rejected by Postgres at
@@ -149,7 +151,7 @@ Defined in `packages/database/src/schema.ts`, next to each table:
 - **`sessions`** — one policy, `auth_manage_sessions`, `FOR ALL` to `provence360_auth` only. `provence360_app` has no grant on this table whatsoever (not even a denying RLS policy is needed — there's nothing to authorize in the first place). See [ADR 0007](adr/0007-session-strategy.md).
 - **`sites`, `domains`** additionally carry a second, `SELECT`-only, `USING (true)` policy granted to `provence360_resolver` — see [the four roles](#the-four-roles).
 - **`memberships`, `tenants`** additionally carry a `SELECT`-only policy granted to `provence360_auth` (`auth_read_memberships`/`auth_read_tenants`) — the read side of `getMembership()`/`listMembershipsForUser()`, which have to run before `withTenantContext` can open. Membership _mutations_ never go through this role; they go through `packages/auth/src/membership-repository.ts`, tenant-scoped and permission-checked, exactly like `sites`/`domains`.
-- **`properties`, `units`, `unit_amenities`, `media_assets`, `pages`** (v0.3) — `tenant_id = current_setting('app.tenant_id', true)::uuid`, same `FOR ALL`/`USING`+`WITH CHECK` shape as `sites`/`domains`, each additionally backstopped by the composite-FK layer described above.
+- **`properties`, `units`, `unit_amenities`, `media_assets`, `pages`** (v0.3), **`unit_sleeping_arrangements`, `property_amenities`** (v0.6) — `tenant_id = current_setting('app.tenant_id', true)::uuid`, same `FOR ALL`/`USING`+`WITH CHECK` shape as `sites`/`domains`, each additionally backstopped by the composite-FK layer described above. See `packages/rentals/src/rls.test.ts` for the v0.6 tables' direct, real-Postgres cross-tenant tests.
 - **`themes`, `amenities`** (v0.3) — platform-level catalogs, not tenant-scoped at all. Both carry a permissive `SELECT`-only, `USING (true)` policy granted to `provence360_app` (every tenant reads the same rows) and **no write grant whatsoever** for that role — writes are reserved for the table-owning admin role, exactly the `sites`/`domains` resolver-role pattern applied to writes instead of reads. See [ADR 0011](adr/0011-theme-token-model.md) and [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
 
 ## v0.3 adversarial review

@@ -78,6 +78,18 @@ describe("extractBlockReferences", () => {
     ]);
   });
 
+  it("amenities: extracts a domain reference to its propertyId when property-scoped (v0.6)", () => {
+    const block = parseBlockInstance({
+      id: "b6b",
+      type: "amenities",
+      version: 1,
+      props: { propertyId },
+    });
+    expect(extractBlockReferences(block)).toEqual([
+      { kind: "domain", domainType: "property", id: propertyId },
+    ]);
+  });
+
   it("text/feature-list/cta: reference nothing (no `references` declared)", () => {
     const text = parseBlockInstance({
       id: "b7",

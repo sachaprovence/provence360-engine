@@ -12,10 +12,12 @@ import { withTenantContext } from "@provence360/tenant";
 import {
   amenitiesExist,
   listAmenities,
+  listAmenitiesForProperty,
   listAmenitiesForUnit,
+  setPropertyAmenities,
   setUnitAmenities,
 } from "./amenity-repository";
-import { UnitNotFoundError } from "./errors";
+import { PropertyNotFoundError, UnitNotFoundError } from "./errors";
 
 beforeAll(async () => {
   await ensureTestDatabaseReady();
@@ -111,5 +113,108 @@ describe("amenitiesExist", () => {
       amenitiesExist(tx, [wifi.id, "00000000-0000-0000-0000-000000000000"]),
     );
     expect(exists).toBe(false);
+  });
+});
+
+async function propertyFor(tenantId: string) {
+  const site = await createSite({ tenantId });
+  return createProperty({ tenantId, siteId: site.id });
+}
+
+describe("setPropertyAmenities / listAmenitiesForProperty (v0.6 property-level amenities)", () => {
+  it("attaches amenities to a property owned by the current tenant, distinct from any of its units' amenities", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const unit = await createUnit({ tenantId: tenant.id, propertyId: property.id });
+    const pool = await createAmenity({ key: "pool" });
+    const wifi = await createAmenity({ key: "wifi" });
+
+    await withTenantContext(tenant.id, (tx) => setPropertyAmenities(tx, property.id, [pool.id]));
+    await withTenantContext(tenant.id, (tx) => setUnitAmenities(tx, unit.id, [wifi.id]));
+
+    const propertyAmenityList = await withTenantContext(tenant.id, (tx) =>
+      listAmenitiesForProperty(tx, property.id),
+    );
+    expect(propertyAmenityList.map((a) => a.key)).toEqual(["pool"]);
+
+    const unitAmenityList = await withTenantContext(tenant.id, (tx) =>
+      listAmenitiesForUnit(tx, unit.id),
+    );
+    expect(unitAmenityList.map((a) => a.key)).toEqual(["wifi"]);
+  });
+
+  it("refuses to attach amenities to another tenant's property", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    const propertyB = await propertyFor(tenantB.id);
+    const wifi = await createAmenity({ key: "wifi" });
+
+    await expect(
+      withTenantContext(tenantA.id, (tx) => setPropertyAmenities(tx, propertyB.id, [wifi.id])),
+    ).rejects.toThrow(PropertyNotFoundError);
+  });
+
+  it("is idempotent/replacing, same as setUnitAmenities", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const wifi = await createAmenity({ key: "wifi" });
+    const pool = await createAmenity({ key: "pool" });
+
+    await withTenantContext(tenant.id, (tx) =>
+      setPropertyAmenities(tx, property.id, [wifi.id, pool.id]),
+    );
+    await withTenantContext(tenant.id, (tx) => setPropertyAmenities(tx, property.id, [wifi.id]));
+
+    const attached = await withTenantContext(tenant.id, (tx) =>
+      listAmenitiesForProperty(tx, property.id),
+    );
+    expect(attached.map((a) => a.key)).toEqual(["wifi"]);
+  });
+});
+
+describe("amenity metadata validation (previously entirely unvalidated)", () => {
+  it("accepts a valid, closed metadata shape ({ featured, note })", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const pool = await createAmenity({ key: "pool" });
+
+    await withTenantContext(tenant.id, (tx) =>
+      setPropertyAmenities(tx, property.id, [
+        { amenityId: pool.id, metadata: { featured: true, note: "Heated year-round" } },
+      ]),
+    );
+
+    const [attached] = await withTenantContext(tenant.id, (tx) =>
+      listAmenitiesForProperty(tx, property.id),
+    );
+    expect(attached?.metadata).toEqual({ featured: true, note: "Heated year-round" });
+  });
+
+  it("rejects an unknown metadata key instead of silently storing it", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const pool = await createAmenity({ key: "pool" });
+
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        setPropertyAmenities(tx, property.id, [
+          { amenityId: pool.id, metadata: { heated: true } as never },
+        ]),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("bare amenity ids (pre-v0.6 shape) still default to empty metadata", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const unit = await createUnit({ tenantId: tenant.id, propertyId: property.id });
+    const wifi = await createAmenity({ key: "wifi" });
+
+    await withTenantContext(tenant.id, (tx) => setUnitAmenities(tx, unit.id, [wifi.id]));
+
+    const [attached] = await withTenantContext(tenant.id, (tx) =>
+      listAmenitiesForUnit(tx, unit.id),
+    );
+    expect(attached?.metadata).toEqual({});
   });
 });

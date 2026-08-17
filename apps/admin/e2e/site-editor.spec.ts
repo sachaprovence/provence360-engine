@@ -104,7 +104,13 @@ test.describe("Site Editor — properties, units, amenities", () => {
 
     await page.getByText("Villa principale").click();
     await expect(page.getByRole("heading", { name: "Amenities" })).toBeVisible();
-    await expect(page.getByText("Piscine chauffée")).toBeVisible();
+    // Exact match including the category suffix — the platform-level
+    // amenity catalog (packages/rentals' `listAmenities`) is global, not
+    // tenant-scoped, so it can gain more rows over time (including from
+    // other e2e specs' fixtures); a plain substring match on the label
+    // alone would become ambiguous as soon as a second catalog entry
+    // shares a similarly-cased label.
+    await expect(page.getByText("Piscine chauffée(wellness)", { exact: true })).toBeVisible();
   });
 
   test("a plain MEMBER sees Properties read-only (no create-property form)", async ({ page }) => {

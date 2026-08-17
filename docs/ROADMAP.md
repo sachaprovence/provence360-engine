@@ -68,6 +68,25 @@ appearance could silently drift after publish. See
 - **The public runtime resolves any published Page**, not only home (`apps/web/app/[[...slug]]/page.tsx`) — a necessary consequence of resolved navigation actually going somewhere.
 - **SEO wired into rendered output for the first time** — `generateMetadata` reads title/description/canonical/robots/og:image from the published Revision's own `seo` field (the existing `seoSchema` contract, validated since v0.3 but never previously read by anything).
 
+## What Foundation v0.6 adds
+
+The Rental Domain & Guest Experience Kernel — richer Property/Unit guest-
+facing data, a real public-vs-admin Rental visibility boundary, and
+Property-level Amenities, without touching v0.4/v0.5's Presentation-
+Frozen/Business-Live boundary or the media-freezing/reference mechanism.
+See [ADR 0018](adr/0018-rental-domain-guest-experience.md).
+
+- **Guest Experience fields on `Property`** — check-in/out times, quiet hours (both native `time` columns), a tri-state (`allowed`/`not_allowed`/`on_request`) smoking/pets/events policy, and `locationDisclosure` (`exact`/`approximate`/`hidden`, defaulting to `exact` so no existing Property's rendered address silently changes).
+- **Structured sleeping arrangements** (`unit_sleeping_arrangements`) — room label, bed type, quantity, ordering, with real create/update/delete, replacing the crude `beds` aggregate for any Unit detailed enough to have them. `beds` remains the fallback when no detail rows exist.
+- **Property-level Amenities** (`property_amenities`) — the same catalog-join shape as the pre-existing `unit_amenities`, one level up, for facts that belong to the whole Property (a shared pool) rather than one Unit.
+- **A real, minimal amenity metadata schema** (`amenityMetadataSchema`) — `unit_amenities`/`property_amenities.metadata` was JSONB with zero validation (and, in practice, no write path) since v0.3; now a small, closed, `.strict()` shape applied uniformly.
+- **A named public-vs-admin Rental visibility boundary** — `isPublicPropertyStatus`/`isPublicUnitStatus`, public-scoped read functions, and `RenderContext.publicOnly` (the direct sibling of v0.5's `RenderContext.media`). Closes a real pre-v0.6 gap: `property-summary`/`amenities` blocks applied no status filtering at all; only `unit-grid` did, inline.
+- **Location-privacy enforced server-side, not just UI-hidden** — `packages/rentals/src/guest-view.ts`'s guest-view projection structurally omits address fields a Property's `locationDisclosure` doesn't allow; a renderer that forgets to check disclosure cannot leak the address, because the private fields were never in the object it received.
+- **Hardened publish-time domain-reference validation** — a `propertyId`/`unitId` a block references must now also be currently public (`domain_reference_not_active`, distinct from `domain_reference_missing`), catching a page bound to draft/archived rental data at edit time instead of only at render time.
+- **Optimistic concurrency extended to Property/Unit** — the same opt-in `expectedUpdatedAt`/`*ConflictError` pattern `packages/sites`/`packages/content` already use, backward-compatible.
+- **All three touched content blocks stay on `@1`** — every new prop is optional and defaulted-false; an already-stored instance keeps rendering exactly as before. `amenities@1` widens to accept `propertyId` as an alternative to `unitId` without breaking any stored instance.
+- **A minimal but real admin UI** — Property/Unit edit forms now expose every field the domain model has (including several pre-existing ones — `internalName`, full address, lat/lng, timezone, `beds`/`bathrooms`/`size` — that had zero UI before v0.6), plus Property-level amenity selection and sleeping-arrangement add/remove.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -92,6 +111,7 @@ requirements a later phase hasn't settled yet:
 - **Real observability.** `packages/observability`'s logger is structured JSON-lines to stdout; no OTel export, no tracing, no metrics backend, no request-id correlation across service boundaries yet.
 - **Worker jobs.** `apps/worker` is a heartbeat-only process boundary — domain re-verification, release publishing, session cleanup, and any other scheduled work land here once there's something to schedule.
 - **A platform super-admin.** Deliberately undesigned so far — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md) for why it needs its own identity concept rather than an extension of `MembershipRole`.
-- **No per-amenity metadata schema.** `unit_amenities.metadata` exists as a small JSONB escape hatch (e.g. `{ heated: true }` for a pool) but nothing validates or defines its shape per catalog entry yet — deliberately deferred until there's a second real consumer. See [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
 - **No component/block-level theme variants.** Only the token layer ships in v0.3 — see [docs/THEMES.md](THEMES.md).
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
+- **No Virtual Tours abstraction.** Audited explicitly for v0.6 (section 19 of that brief) — no existing 360°/Matterport-style abstraction anywhere in this codebase to extend; deliberately deferred rather than speculatively built. See [ADR 0018](adr/0018-rental-domain-guest-experience.md#decision-10--virtual-tours-audited-deliberately-deferred).
+- **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.

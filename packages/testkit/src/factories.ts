@@ -7,6 +7,7 @@ import {
   memberships,
   pages,
   properties,
+  propertyAmenities,
   siteRevisions,
   sitePublications,
   sites,
@@ -14,8 +15,11 @@ import {
   themes,
   unitAmenities,
   units,
+  unitSleepingArrangements,
   users,
   type AmenityCategory,
+  type BedType,
+  type LocationDisclosure,
   type MediaKind,
   type MembershipRole,
   type PageStatus,
@@ -23,6 +27,7 @@ import {
   type PropertyStatus,
   type PropertyType,
   type PublicationAction,
+  type RentalPolicy,
   type SiteStatus,
   type TenantStatus,
   type ThemeStatus,
@@ -142,6 +147,19 @@ export async function createProperty(input: {
   slug?: string;
   propertyType?: PropertyType;
   status?: PropertyStatus;
+  addressLine1?: string;
+  addressCity?: string;
+  addressCountry?: string;
+  latitude?: number;
+  longitude?: number;
+  checkInTime?: string;
+  checkOutTime?: string;
+  quietHoursStart?: string;
+  quietHoursEnd?: string;
+  smokingPolicy?: RentalPolicy;
+  petsPolicy?: RentalPolicy;
+  eventsPolicy?: RentalPolicy;
+  locationDisclosure?: LocationDisclosure;
 }) {
   const db = getAdminDb();
   const [row] = await db
@@ -154,6 +172,21 @@ export async function createProperty(input: {
       slug: input.slug ?? `property-${shortId()}`,
       propertyType: input.propertyType ?? "villa",
       status: input.status ?? "active",
+      addressLine1: input.addressLine1,
+      addressCity: input.addressCity,
+      addressCountry: input.addressCountry,
+      ...(input.latitude !== undefined ? { latitude: String(input.latitude) } : {}),
+      ...(input.longitude !== undefined ? { longitude: String(input.longitude) } : {}),
+      checkInTime: input.checkInTime,
+      checkOutTime: input.checkOutTime,
+      quietHoursStart: input.quietHoursStart,
+      quietHoursEnd: input.quietHoursEnd,
+      smokingPolicy: input.smokingPolicy,
+      petsPolicy: input.petsPolicy,
+      eventsPolicy: input.eventsPolicy,
+      ...(input.locationDisclosure !== undefined
+        ? { locationDisclosure: input.locationDisclosure }
+        : {}),
     })
     .returning();
   if (!row) throw new Error("Failed to create test property");
@@ -234,6 +267,50 @@ export async function attachUnitAmenity(input: {
     })
     .returning();
   if (!row) throw new Error("Failed to attach test unit amenity");
+  return row;
+}
+
+export async function attachPropertyAmenity(input: {
+  tenantId: string;
+  propertyId: string;
+  amenityId: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const db = getAdminDb();
+  const [row] = await db
+    .insert(propertyAmenities)
+    .values({
+      tenantId: input.tenantId,
+      propertyId: input.propertyId,
+      amenityId: input.amenityId,
+      metadata: input.metadata ?? {},
+    })
+    .returning();
+  if (!row) throw new Error("Failed to attach test property amenity");
+  return row;
+}
+
+export async function createSleepingArrangement(input: {
+  tenantId: string;
+  unitId: string;
+  roomLabel?: string;
+  bedType?: BedType;
+  quantity?: number;
+  ordering?: number;
+}) {
+  const db = getAdminDb();
+  const [row] = await db
+    .insert(unitSleepingArrangements)
+    .values({
+      tenantId: input.tenantId,
+      unitId: input.unitId,
+      roomLabel: input.roomLabel,
+      bedType: input.bedType ?? "double",
+      quantity: input.quantity ?? 1,
+      ordering: input.ordering ?? 0,
+    })
+    .returning();
+  if (!row) throw new Error("Failed to create test sleeping arrangement");
   return row;
 }
 

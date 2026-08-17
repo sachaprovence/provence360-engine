@@ -8,6 +8,7 @@ import {
   memberships,
   pages,
   properties,
+  propertyAmenities,
   siteRevisions,
   sitePublications,
   sites,
@@ -15,6 +16,7 @@ import {
   themes,
   unitAmenities,
   units,
+  unitSleepingArrangements,
   users,
 } from "@provence360/database";
 import { getAdminDb } from "@provence360/database/admin";
@@ -80,6 +82,6 @@ export async function resetDatabase(): Promise<void> {
   assertTestEnvironment();
   const db = getAdminDb();
   await db.execute(
-    sql`truncate table ${auditLogs}, ${sitePublications}, ${siteRevisions}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
+    sql`truncate table ${auditLogs}, ${sitePublications}, ${siteRevisions}, ${unitSleepingArrangements}, ${propertyAmenities}, ${unitAmenities}, ${units}, ${properties}, ${pages}, ${mediaAssets}, ${domains}, ${sites}, ${memberships}, ${tenants}, ${users}, ${amenities}, ${themes} restart identity cascade`,
   );
 }

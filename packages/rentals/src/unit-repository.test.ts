@@ -8,11 +8,14 @@ import {
   resetDatabase,
 } from "@provence360/testkit";
 import { withTenantContext } from "@provence360/tenant";
-import { PropertyNotFoundError, UnitNotFoundError } from "./errors";
+import { PropertyNotFoundError, UnitConflictError, UnitNotFoundError } from "./errors";
 import {
   createUnit,
   deleteUnit,
+  getPublicUnit,
   getUnit,
+  isPublicUnitStatus,
+  listPublicUnitsForProperty,
   listUnitsForProperty,
   updateUnit,
 } from "./unit-repository";
@@ -197,5 +200,141 @@ describe("listUnitsForProperty", () => {
 
     const list = await withTenantContext(tenant.id, (tx) => listUnitsForProperty(tx, property.id));
     expect(list.map((u) => u.slug)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("isPublicUnitStatus / getPublicUnit / listPublicUnitsForProperty (v0.6 public visibility)", () => {
+  it("active and not_bookable_separately are public; draft and archived are not", () => {
+    expect(isPublicUnitStatus("active")).toBe(true);
+    expect(isPublicUnitStatus("not_bookable_separately")).toBe(true);
+    expect(isPublicUnitStatus("draft")).toBe(false);
+    expect(isPublicUnitStatus("archived")).toBe(false);
+  });
+
+  it("getPublicUnit resolves an active unit but not a draft or archived one", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const active = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, {
+        propertyId: property.id,
+        internalName: "Active",
+        publicName: "Active",
+        slug: "active",
+        status: "active",
+      }),
+    );
+    const draft = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, {
+        propertyId: property.id,
+        internalName: "Draft",
+        publicName: "Draft",
+        slug: "draft",
+        status: "draft",
+      }),
+    );
+    const archived = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, {
+        propertyId: property.id,
+        internalName: "Archived",
+        publicName: "Archived",
+        slug: "archived",
+        status: "archived",
+      }),
+    );
+
+    expect(await withTenantContext(tenant.id, (tx) => getPublicUnit(tx, active.id))).not.toBeNull();
+    expect(await withTenantContext(tenant.id, (tx) => getPublicUnit(tx, draft.id))).toBeNull();
+    expect(await withTenantContext(tenant.id, (tx) => getPublicUnit(tx, archived.id))).toBeNull();
+  });
+
+  it("listPublicUnitsForProperty excludes draft/archived units — a Property later archiving one of its Units stops showing it publicly while the Unit row itself stays intact", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, {
+        propertyId: property.id,
+        internalName: "Active",
+        publicName: "Active",
+        slug: "active",
+        status: "active",
+      }),
+    );
+    const toArchive = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, {
+        propertyId: property.id,
+        internalName: "Soon Archived",
+        publicName: "Soon Archived",
+        slug: "soon-archived",
+        status: "active",
+      }),
+    );
+
+    let publicList = await withTenantContext(tenant.id, (tx) =>
+      listPublicUnitsForProperty(tx, property.id),
+    );
+    expect(publicList.map((u) => u.slug).sort()).toEqual(["active", "soon-archived"]);
+
+    await withTenantContext(tenant.id, (tx) =>
+      updateUnit(tx, { id: toArchive.id, status: "archived" }),
+    );
+
+    publicList = await withTenantContext(tenant.id, (tx) =>
+      listPublicUnitsForProperty(tx, property.id),
+    );
+    expect(publicList.map((u) => u.slug)).toEqual(["active"]);
+
+    // The row itself is untouched — still fully readable/editable in admin.
+    const stillThere = await withTenantContext(tenant.id, (tx) => getUnit(tx, toArchive.id));
+    expect(stillThere?.status).toBe("archived");
+  });
+});
+
+describe("updateUnit optimistic concurrency (expectedUpdatedAt)", () => {
+  it("succeeds when expectedUpdatedAt matches the unit's current updatedAt", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const unit = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, { propertyId: property.id, internalName: "U", publicName: "U", slug: "u" }),
+    );
+
+    const updated = await withTenantContext(tenant.id, (tx) =>
+      updateUnit(tx, { id: unit.id, status: "active", expectedUpdatedAt: unit.updatedAt }),
+    );
+    expect(updated.status).toBe("active");
+  });
+
+  it("throws UnitConflictError when expectedUpdatedAt is stale — someone else's write already landed", async () => {
+    const tenant = await createTenant();
+    const property = await propertyFor(tenant.id);
+    const unit = await withTenantContext(tenant.id, (tx) =>
+      createUnit(tx, { propertyId: property.id, internalName: "U", publicName: "U", slug: "u" }),
+    );
+
+    // A first, unrelated write lands...
+    await withTenantContext(tenant.id, (tx) => updateUnit(tx, { id: unit.id, status: "active" }));
+
+    // ...then a second caller, still holding the *original* updatedAt, tries to write.
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateUnit(tx, { id: unit.id, status: "archived", expectedUpdatedAt: unit.updatedAt }),
+      ),
+    ).rejects.toThrow(UnitConflictError);
+
+    // The conflicting write never landed.
+    const stillActive = await withTenantContext(tenant.id, (tx) => getUnit(tx, unit.id));
+    expect(stillActive?.status).toBe("active");
+  });
+
+  it("still throws UnitNotFoundError (not UnitConflictError) for a genuinely missing unit, even with expectedUpdatedAt set", async () => {
+    const tenant = await createTenant();
+    await expect(
+      withTenantContext(tenant.id, (tx) =>
+        updateUnit(tx, {
+          id: "00000000-0000-0000-0000-000000000000",
+          status: "active",
+          expectedUpdatedAt: new Date(),
+        }),
+      ),
+    ).rejects.toThrow(UnitNotFoundError);
   });
 });

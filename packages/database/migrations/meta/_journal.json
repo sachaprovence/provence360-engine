@@ -78,6 +78,20 @@
       "when": 1786904700000,
       "tag": "0010_sites_published_revision_composite_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786951073855,
+      "tag": "0011_rental_guest_experience_kernel",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786951100000,
+      "tag": "0012_v06_rental_guest_experience_role_grants",
+      "breakpoints": true
     }
   ]
 }
