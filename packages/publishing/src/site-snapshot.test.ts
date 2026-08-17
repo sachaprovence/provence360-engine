@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_SITE_BRANDING } from "@provence360/themes";
 import {
   InvalidSnapshotError,
   UnknownSnapshotVersionError,
@@ -48,6 +49,39 @@ function validV2Snapshot() {
     theme: validTheme,
     pages: [],
     media: [],
+  };
+}
+
+function validV3Snapshot() {
+  return {
+    schemaVersion: 3,
+    site: {
+      name: "Test Site",
+      publicName: null,
+      timezone: "Europe/Paris",
+      defaultLocale: "fr",
+      enabledLocales: ["fr"],
+      contactEmail: null,
+      contactPhone: null,
+      navigation: { items: [] },
+      features: {},
+    },
+    theme: validTheme,
+    branding: DEFAULT_SITE_BRANDING,
+    pages: [],
+    media: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        kind: "image",
+        storageKey: "tenants/t1/media/original/legacy.jpg",
+        mimeType: "image/jpeg",
+        width: 800,
+        height: 600,
+        altText: null,
+        // No checksumSha256/byteSize/variants — a real pre-v0.9 descriptor
+        // (this MediaAsset was never through v0.9's ingestion pipeline).
+      },
+    ],
   };
 }
 
@@ -122,5 +156,80 @@ describe("parseSiteSnapshot", () => {
     const raw = { ...validV2Snapshot(), extraUnexpectedField: "should not appear" };
     const snapshot = parseSiteSnapshot(raw);
     expect(snapshot).not.toHaveProperty("extraUnexpectedField");
+  });
+
+  // v0.9 — Media Ingestion, Asset Lifecycle & Delivery Kernel (ADR 0022):
+  // the SNAPSHOT_SCHEMA_VERSION 3 -> 4 upgrade chain. No shape actually
+  // changed (mediaDescriptorSchema's new fields are additive-optional), so
+  // a real historical v3 Revision — including one whose media entries
+  // predate v0.9 and have no checksum/variants at all — must keep parsing
+  // and simply get relabeled schemaVersion 4, never rejected and never
+  // silently mutated.
+  it("accepts a well-formed v3 snapshot and upgrades it to the current schema version", () => {
+    const snapshot = parseSiteSnapshot(validV3Snapshot());
+    expect(snapshot.schemaVersion).toBe(SNAPSHOT_SCHEMA_VERSION);
+    expect(snapshot.branding).toEqual(DEFAULT_SITE_BRANDING);
+    expect(snapshot.media).toEqual([
+      expect.objectContaining({
+        id: "11111111-1111-4111-8111-111111111111",
+        storageKey: "tenants/t1/media/original/legacy.jpg",
+      }),
+    ]);
+    // Genuinely absent, not present-but-undefined — a v3 descriptor never
+    // had these keys at all.
+    expect(snapshot.media?.[0]).not.toHaveProperty("checksumSha256");
+    expect(snapshot.media?.[0]).not.toHaveProperty("variants");
+  });
+
+  it("accepts a v4 snapshot whose media descriptors carry v0.9 fingerprint/variant data", () => {
+    const v4 = {
+      ...validV3Snapshot(),
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      media: [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          kind: "image",
+          storageKey: "tenants/t1/media/original/hero.jpg",
+          mimeType: "image/jpeg",
+          width: 2000,
+          height: 1200,
+          altText: "A villa at sunset",
+          checksumSha256: "a".repeat(64),
+          byteSize: 123_456,
+          variants: {
+            thumbnail: {
+              storageKey: "tenants/t1/media/variants/hero-thumbnail.jpg",
+              width: 320,
+              height: 192,
+              byteSize: 12_000,
+            },
+          },
+        },
+      ],
+    };
+    const snapshot = parseSiteSnapshot(v4);
+    expect(snapshot.schemaVersion).toBe(SNAPSHOT_SCHEMA_VERSION);
+    expect(snapshot.media?.[0]?.checksumSha256).toBe("a".repeat(64));
+    expect(snapshot.media?.[0]?.variants?.thumbnail?.width).toBe(320);
+  });
+
+  it("rejects a v4 snapshot with a malformed checksumSha256 (not a 64-char lowercase hex digest)", () => {
+    const v4 = {
+      ...validV3Snapshot(),
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      media: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          kind: "image",
+          storageKey: "tenants/t1/media/original/bad.jpg",
+          mimeType: "image/jpeg",
+          width: 100,
+          height: 100,
+          altText: null,
+          checksumSha256: "not-a-real-digest",
+        },
+      ],
+    };
+    expect(() => parseSiteSnapshot(v4)).toThrow(InvalidSnapshotError);
   });
 });

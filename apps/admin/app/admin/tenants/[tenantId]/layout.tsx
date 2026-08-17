@@ -39,6 +39,7 @@ export default async function TenantLayout({
     { href: base, label: "Overview", visible: permissions.has("tenant.read") },
     { href: `${base}/sites`, label: "Sites", visible: permissions.has("site.read") },
     { href: `${base}/domains`, label: "Domains", visible: permissions.has("domain.read") },
+    { href: `${base}/media`, label: "Media", visible: permissions.has("media.read") },
     { href: `${base}/members`, label: "Members", visible: permissions.has("member.read") },
     { href: `${base}/audit`, label: "Audit log", visible: permissions.has("audit.read") },
   ];

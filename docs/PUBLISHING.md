@@ -31,7 +31,7 @@ currently published."
 `createRevisionFromDraft`. Holds:
 
 - `revisionNumber` — monotonic per Site, starting at 1.
-- `snapshot` (JSONB) — a versioned document (`schemaVersion: 2`, see
+- `snapshot` (JSONB) — a versioned document (`schemaVersion: 4` as of v0.9, see
   [ADR 0017](adr/0017-site-composition-kernel.md#decision-5--snapshot-schema-versioning-and-legacy-compatibility)):
   the Site's presentation fields including its _resolved_ navigation, its
   fully _resolved_ theme tokens (not a live `themeId` reference — see
@@ -151,10 +151,36 @@ provider's removal from the registry (or a raw, non-repository DB edit),
 not a path any normal write ever takes. See
 [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md#decision-5--publish-time-validation-gains-a-third-failure-mode-domain_reference_invalid).
 
+## Media (v0.9)
+
+The frozen `MediaDescriptor` above gains three new, purely **optional**
+fields at publish time whenever the referenced MediaAsset went through the
+real v0.9 ingestion pipeline (`packages/media`, see
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md)):
+`checksumSha256` (also the delivery URL's fingerprint — see
+[docs/MEDIA.md](MEDIA.md)), `byteSize`, and `variants` (a closed,
+version-stripped copy of the generated thumbnail/small/medium/large
+derivatives). A pre-v0.9 or seed-inserted MediaAsset simply has none of
+these in its frozen descriptor — the same "we don't always know" contract
+`width`/`height` already had. Nothing about _when_ media freezes or _how_
+a stale reference is handled changed; this is purely additive data riding
+the same `resolveMediaManifest`/`resolveBrandMedia` freeze this section
+already describes.
+
+The mandated §12 invariant — upload image A, publish, Public shows A;
+Draft moves to image B; Public still shows A; republish; Public shows B —
+is proven directly by
+`packages/publishing/src/media-publication-invariant.test.ts` and, at the
+rendered-HTML/HTTP level, by `apps/web/e2e/media.spec.ts`.
+
 ## Snapshot format & versioning (v0.5)
 
 `site_revisions.snapshot` carries an explicit `schemaVersion` (currently
-`2`). `packages/publishing/src/site-snapshot.ts`'s `parseSiteSnapshot` is
+`4`, bumped from `3` in v0.9 to accommodate the new, purely-optional
+`checksumSha256`/`byteSize`/`variants` media-descriptor fields — see
+"Media (v0.9)" below and
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md)).
+`packages/publishing/src/site-snapshot.ts`'s `parseSiteSnapshot` is
 the one runtime trust boundary every stored snapshot passes through
 before any caller (the public runtime, the admin draft-summary
 comparison) treats it as typed data — replacing what were previously bare

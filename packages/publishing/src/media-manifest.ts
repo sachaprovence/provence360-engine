@@ -20,6 +20,23 @@ import {
 import type { PublishValidationIssue } from "./errors";
 import type { MediaDescriptor } from "./site-snapshot";
 
+/**
+ * `media_assets.variants` is stored as `{version: 1, thumbnail?: {...},
+ * ...}` (or `{}` for an asset with no generated variants — every pre-v0.9
+ * row, and any non-image asset). The frozen `MediaDescriptor.variants`
+ * field deliberately drops the `version` wrapper: a Revision snapshot
+ * already has its own top-level `schemaVersion` governing the whole
+ * document's shape (see `parseSiteSnapshot`'s upgrade chain), so a nested,
+ * independently-versioned sub-object here would be a second version axis
+ * with no real use — `undefined` (no variants) vs. a plain object (some
+ * variants) is all a consumer ever needs to branch on.
+ */
+function extractVariantsForDescriptor(raw: unknown): MediaDescriptor["variants"] | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { version: _version, ...rest } = raw as Record<string, unknown>;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
 export type DomainRefType = "property" | "unit" | "virtualTour";
 
 export interface CollectedReferences {
@@ -98,6 +115,9 @@ export async function resolveMediaManifest(
       width: row.width,
       height: row.height,
       altText: row.altText,
+      checksumSha256: row.checksumSha256 ?? undefined,
+      byteSize: row.byteSize ?? undefined,
+      variants: extractVariantsForDescriptor(row.variants),
     });
   }
   return { media, issues };
@@ -136,6 +156,9 @@ export async function resolveBrandMedia(
     width: row.width,
     height: row.height,
     altText: row.altText,
+    checksumSha256: row.checksumSha256 ?? undefined,
+    byteSize: row.byteSize ?? undefined,
+    variants: extractVariantsForDescriptor(row.variants),
   }));
 
   const resolvedBrand: SiteBrandingBrand = { ...brand };

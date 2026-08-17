@@ -15,11 +15,13 @@
   "dependencies": {
     "@provence360/database": "workspace:*",
     "@provence360/domains": "workspace:*",
+    "@provence360/media": "workspace:*",
     "@provence360/publishing": "workspace:*",
     "@provence360/rentals": "workspace:*",
     "@provence360/renderer": "workspace:*",
     "@provence360/tenant": "workspace:*",
     "@provence360/themes": "workspace:*",
+    "@provence360/validation": "workspace:*",
     "drizzle-orm": "0.45.2",
     "next": "16.3.1",
     "react": "19.2.8",

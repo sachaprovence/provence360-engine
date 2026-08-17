@@ -2,6 +2,7 @@ import type { GalleryProps } from "@provence360/content";
 import { resolveLocalizedString } from "@provence360/content";
 import type { BlockRenderer } from "../block-renderer-registry";
 import { resolveMediaDescriptors } from "../resolve-media";
+import { resolveResponsiveImage } from "../resolve-delivery-url";
 
 export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props, context }) => {
   const t = context.tokens;
@@ -28,10 +29,21 @@ export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props
         {props.mediaAssetIds.map((mediaAssetId) => {
           const asset = byId.get(mediaAssetId);
           if (!asset) return null;
+          // v0.9 — real width/height (zero CLS) and a `srcset` so a phone
+          // never downloads a desktop-sized original; `loading="lazy"`
+          // since a Gallery image is never the page's LCP element (Hero
+          // is) — see docs/RENDERING.md#performance.
+          const image = resolveResponsiveImage(asset);
           return (
             <img
               key={mediaAssetId}
-              src={asset.storageKey}
+              src={image.src}
+              {...(image.srcSet
+                ? { srcSet: image.srcSet, sizes: "(max-width: 640px) 100vw, 33vw" }
+                : {})}
+              width={image.width ?? undefined}
+              height={image.height ?? undefined}
+              loading="lazy"
               alt={asset.altText ?? ""}
               style={{ width: "100%", borderRadius: t["radius.medium"], objectFit: "cover" }}
             />

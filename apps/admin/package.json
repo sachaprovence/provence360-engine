@@ -17,6 +17,7 @@
     "@provence360/content": "workspace:*",
     "@provence360/database": "workspace:*",
     "@provence360/domains": "workspace:*",
+    "@provence360/media": "workspace:*",
     "@provence360/observability": "workspace:*",
     "@provence360/publishing": "workspace:*",
     "@provence360/renderer": "workspace:*",

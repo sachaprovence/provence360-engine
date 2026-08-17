@@ -60,6 +60,17 @@ rather than one giant "core":
   framework-free) meet actual React components (`renderer`'s own
   `blockRendererRegistry`) — see [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md)
   for why they're kept as two separate registries rather than one.
+- **`media`** (v0.9) — real upload/storage/processing/delivery for
+  `MediaAsset` (see [ADR 0022](adr/0022-media-ingestion-asset-delivery.md)
+  and [docs/MEDIA.md](MEDIA.md)). Depends on `content` (to create the
+  final row), `database`, `tenant`, `observability`, `validation`, plus
+  `sharp` and `@aws-sdk/client-s3`. Deliberately **not** a dependency of
+  `renderer` or `publishing` — both independently re-implement the small
+  amount of shared logic they need (a URL builder, a version-stripping
+  helper) rather than pull `sharp`/`@aws-sdk/client-s3`/`@provence360/database`
+  into packages whose whole value is staying free of exactly that module
+  graph. Consumed only by `apps/web`'s and `apps/admin`'s new `/media/...`
+  delivery routes and `apps/admin`'s Media Library/upload Server Actions.
 
 `sites` (existing since v0.1) gained a dependency on `themes` in v0.3, for
 `updateSiteTheme`'s override validation — still no dependency the other
@@ -80,9 +91,20 @@ Host -> DomainResolver -> Site -> Published Revision -> requested Page -> Domain
 2. **DomainResolver** (`packages/domains/src/resolver.ts`) — normalizes the hostname and looks it up against `domains`, joined to `sites`, using the narrow `provence360_resolver` Postgres role (no tenant known yet, so this can't go through `withTenantContext`). Returns `{ siteId, tenantId, siteStatus }` or `null`.
 3. **Site** — once `tenantId` is known, everything else goes through `withTenantContext(tenantId, ...)` (`packages/tenant`), which opens an RLS-scoped transaction.
 4. **Published Revision** (v0.4 — `packages/publishing`'s `getPublishedRevision`) — resolves `sites.published_revision_id` and returns its immutable, runtime-parsed snapshot (`parseSiteSnapshot` — v0.5, see [docs/PUBLISHING.md](PUBLISHING.md)) or `null` if the Site has never been published or the snapshot fails to parse. This is the thing that changed from v0.3: this step used to read the Page's live row directly; it now reads a frozen Revision instead — the live `pages` table is never touched by this pipeline at all.
-5. **requested Page** (v0.5) — the URL's slug (any published Page, not only home — `app/[[...slug]]/page.tsx` is an optional catch-all) is looked up inside the Revision's own `pages` array.
+5. **requested Page** (v0.5) — the URL's slug (any published Page, not only home — `app/[[...slug]]/page.tsx` is an optional catch-all) is looked up inside the Revision's own `pages` array. (v0.9 reserves the top-level `/media/*` path for the media delivery route — see below — the same way `/api/*` is already reserved; a Site page whose own slug happens to be `media` is unreachable, an accepted trade-off.)
 6. **Content → Domain data** — `packages/renderer`'s `renderBlocks()` walks the Revision's frozen block array; each domain-bound block (PropertySummary, UnitGrid, Amenities) still loads its own real data from `packages/rentals` through the same tenant-scoped transaction, live — Property/Unit/Amenity data is deliberately never frozen into a Revision (see [docs/SITE_DOMAIN.md#future-release-compatibility](SITE_DOMAIN.md#future-release-compatibility)). Media-referencing blocks (Hero/Gallery) instead resolve from the Revision's own frozen media manifest (v0.5). See [docs/BLOCK_SYSTEM.md](BLOCK_SYSTEM.md).
 7. **Renderer** — the same `renderBlocks()`/block-component code for every Site, driven entirely by the Revision's already-resolved theme tokens, content, and (v0.5) resolved navigation/media. See [docs/RENDERING.md](RENDERING.md) for the full contract, including the measured query count on a seeded page.
+
+**Media delivery (v0.9)** is a separate, parallel route, not part of the
+page pipeline above: `apps/web/app/media/[assetId]/[fingerprint]/[variant]/route.ts`
+resolves tenant from the same `Host` header via the same
+`resolveSiteByHostname` chain, then calls `packages/media`'s shared
+`resolveMediaDelivery` core (also used, with a different tenant-resolution
+strategy, by `apps/admin`'s own Preview delivery route) to stream real
+bytes back with an immutable cache header when the requested fingerprint
+matches the asset's own checksum. See
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md) and
+[docs/MEDIA.md](MEDIA.md).
 
 `packages/publishing` itself sits "above" `content`/`sites`/`themes`/
 `rentals`/`renderer` in the dependency graph below (it depends on all of
@@ -154,7 +176,8 @@ the v0.3 tables specifically. Summary:
 | `properties`     | yes                                      | belongs to exactly one Site (composite FK) — v0.3                                                                              |
 | `units`          | yes                                      | belongs to exactly one Property (composite FK) — v0.3                                                                          |
 | `unit_amenities` | yes                                      | Unit ↔ platform Amenity catalog join — v0.3                                                                                    |
-| `media_assets`   | yes                                      | a reference to a stored file, not the file itself — v0.3                                                                       |
+| `media_assets`   | yes                                      | v0.3 reference row, real bytes live in object storage; v0.9 adds `checksumSha256`/`byteSize`/`variants`/`originalFilename`     |
+| `media_uploads`  | yes                                      | v0.9 — the short-lived, one-shot upload intent; never itself a `MediaAsset`                                                    |
 | `pages`          | yes                                      | belongs to exactly one Site (composite FK); `content` is a validated JSONB block array — v0.3                                  |
 | `themes`         | no (platform catalog)                    | curated, read-only to tenants, same shape as `amenities` — v0.3                                                                |
 | `amenities`      | no (platform catalog)                    | governed structured catalog, not free-text — v0.3                                                                              |

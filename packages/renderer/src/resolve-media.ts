@@ -1,5 +1,19 @@
 import { listMediaAssetsByIds } from "@provence360/content";
-import type { FrozenMediaDescriptor, RenderContext } from "./render-context";
+import type { FrozenMediaDescriptor, FrozenMediaVariants, RenderContext } from "./render-context";
+
+/**
+ * `media_assets.variants` is stored as `{version: 1, thumbnail?: {...},
+ * ...}` (or `{}`) — see `packages/publishing/src/media-manifest.ts`'s own
+ * identical helper for the frozen-manifest path. This is the live-lookup
+ * counterpart: strips the version wrapper so both paths hand a block the
+ * exact same `FrozenMediaVariants` shape regardless of whether it came
+ * from a frozen Revision or a live Draft-preview lookup.
+ */
+function toFrozenVariants(raw: unknown): FrozenMediaVariants | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { version: _version, ...rest } = raw as Record<string, unknown>;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
 
 /**
  * The one place a block resolves a referenced MediaAsset id to a
@@ -14,7 +28,18 @@ export async function resolveMediaDescriptor(
 ): Promise<FrozenMediaDescriptor | null> {
   if (context.media) return context.media.get(id) ?? null;
   const [row] = await listMediaAssetsByIds(context.tx, [id]);
-  return row ?? null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    storageKey: row.storageKey,
+    mimeType: row.mimeType,
+    width: row.width,
+    height: row.height,
+    altText: row.altText,
+    checksumSha256: row.checksumSha256,
+    byteSize: row.byteSize,
+    variants: toFrozenVariants(row.variants),
+  };
 }
 
 /** Batched variant for a block (Gallery) that references several ids at once. */
@@ -31,5 +56,20 @@ export async function resolveMediaDescriptors(
     return found;
   }
   const rows = await listMediaAssetsByIds(context.tx, ids);
-  return new Map(rows.map((row) => [row.id, row]));
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        id: row.id,
+        storageKey: row.storageKey,
+        mimeType: row.mimeType,
+        width: row.width,
+        height: row.height,
+        altText: row.altText,
+        checksumSha256: row.checksumSha256,
+        byteSize: row.byteSize,
+        variants: toFrozenVariants(row.variants),
+      },
+    ]),
+  );
 }

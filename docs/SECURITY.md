@@ -306,6 +306,71 @@ reasoning; the security-relevant guarantees:
   tenant's chosen colors are never auto-corrected — see ADR 0021,
   Decision 11.
 
+## Media ingestion & delivery (v0.9)
+
+Turning `MediaAsset` from a reference-only abstraction into a real upload
+pipeline is inherently a "let a tenant put an untrusted binary file into
+shared object storage, then serve it back to any visitor" feature. See
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md) for full reasoning;
+the security-relevant guarantees:
+
+- **Never trust extension, filename, or client-declared MIME type.**
+  `finalizeMediaUpload` inspects the _actually stored_ bytes with a real
+  decoder (`sharp`) and derives `mimeType`/`width`/`height` from that
+  decode, never from `declaredMimeType` — proven with an explicit test that
+  declares one MIME type while uploading bytes of a different real format
+  (and one that declares a valid image MIME type for genuinely non-image
+  bytes, still rejected).
+- **Format allowlisting happens after decode, not instead of it.** This
+  build's `sharp` can decode SVG via librsvg; SVG is still rejected
+  (`ACCEPTED_IMAGE_FORMATS` is a closed `["jpeg", "png", "webp"]`) because
+  the check is against the decoded format, never "did it decode."
+- **Object keys are opaque and server-generated — a client can never
+  choose, influence, or predict a storage path**, including via a hostile
+  `originalFilename` (`../../../../etc/passwd`, embedded `<script>` tags,
+  a literal NUL byte) — verified directly in
+  `packages/media/src/security-payloads.test.ts`. `originalFilename` is
+  stored purely as inert display text.
+- **A MediaAsset is created only after every validation step succeeds** —
+  the two-phase upload (intent → bytes → finalize) means a malicious or
+  corrupt upload never produces a usable row, only a `media_uploads` entry
+  marked `failed`.
+- **One upload intent can never produce two MediaAssets.** A row lock
+  (`SELECT ... FOR UPDATE`, the same pattern `publishSite` uses) serializes
+  concurrent finalize attempts on the same intent; a `CHECK` constraint
+  additionally makes a half-finalized state unrepresentable at the
+  database level.
+- **Multi-tenant isolation is proven at the RLS layer directly**, not just
+  through the API: `packages/media/src/rls.test.ts` includes a raw-SQL-
+  style cross-tenant UPDATE attempt (forging a finalize on another
+  tenant's intent) and confirms the target row is genuinely untouched, plus
+  cross-tenant read/insert/CHECK-constraint tests.
+- **The delivery route validates every URL segment (UUID, 64-char hex
+  fingerprint, closed variant enum) before any database query** — a
+  malformed request 404s without ever reaching RLS or storage.
+- **The delivery fingerprint gates every variant, including "original,"
+  against the asset's own live `checksumSha256`.** A stale or forged
+  fingerprint never resolves to bytes, for any variant — this is what
+  makes `Cache-Control: immutable` an honest promise (a genuinely
+  content-addressed URL) rather than a hope.
+- **No remote-URL import, anywhere.** v0.9 introduces no "import image
+  from URL" feature and no server-side fetch of a request-supplied URL —
+  the SSRF surface that would create is explicitly out of scope, deferred
+  to a future mission with its own threat model.
+- **`X-Content-Type-Options: nosniff` on every delivery response**;
+  `Content-Type` always comes from the database's own server-validated
+  column, never reflected from a client header.
+- **No storage credential ever reaches the browser.** Upload is
+  server-mediated (the Admin Server Action receives bytes and calls
+  `storage.putObject()` server-side) rather than presigned-URL-based — a
+  deliberate divergence from the brief's own conditional suggestion,
+  chosen partly because it needs no CSP `connect-src` relaxation to any
+  external storage origin (see ADR 0022, Decision 11).
+- **Deletion stays conservative.** The pre-existing hard-delete function is
+  not exposed anywhere in the new Admin UI — see ADR 0022, Decision 14, for
+  why the new delivery route's live lookup makes it newly risky to expose
+  without reference-counting first.
+
 ## Known gaps (tracked, not hidden)
 
 - **No password-reset / email-verification flow.** A user is provisioned by an existing tenant OWNER/ADMIN or the seed script; there is no self-service "forgot password." See [docs/AUTHENTICATION.md](AUTHENTICATION.md).

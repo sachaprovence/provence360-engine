@@ -133,14 +133,28 @@ one Unit (a shared pool, on-site parking). See
 
 ## MediaAsset
 
-A tenant-scoped reference table, not an upload/CDN pipeline (see
+A tenant-scoped reference row (see
 [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md)):
-`kind` (image/video/document), `storageKey` (an opaque pointer — this
-schema doesn't move bytes), `mimeType`, `width`/`height` (nullable),
-`altText`, `metadata` (JSONB), `createdAt` (deliberately no `updatedAt` —
-a new version of a file is a new row, never an edit, the same
-immutability reasoning as an audit log entry). Content references
-`MediaAsset.id`, never a bare URL.
+`kind` (image/video/document), `storageKey` (an opaque pointer), `mimeType`,
+`width`/`height` (nullable), `altText`, `metadata` (JSONB), `createdAt`
+(deliberately no `updatedAt` — a new version of a file is a new row, never
+an edit, the same immutability reasoning as an audit log entry). Content
+references `MediaAsset.id`, never a bare URL. `packages/content` still owns
+this entity exactly as ADR 0012 designed it — v0.9 does not change its
+shape's _meaning_, only extends it.
+
+**v0.9** turns the surrounding pipeline from "reference only, no real
+upload path" into a real one (see
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md) and
+[docs/MEDIA.md](MEDIA.md)) — `packages/media`, a new package, owns upload
+intents, real file validation, object storage, variant generation, and
+delivery, and calls `createMediaAsset` only once real, validated bytes
+exist. Four new, nullable/defaulted columns land on `media_assets`:
+`checksumSha256` (also the delivery URL's fingerprint), `byteSize`,
+`variants` (a closed, versioned JSONB registry of generated derivatives),
+`originalFilename` (display-only, never authority-bearing). The
+"new file = new row, never an edit" invariant above is exactly what v0.9's
+delivery route relies on to make an immutable cache header honest.
 
 ## VirtualTour (v0.7)
 
@@ -278,6 +292,17 @@ Property/Unit use (a status filter on the live read, not a copy) governs
 it too: `isPublicVirtualTourStatus`/`getPublicVirtualTour`, selected by
 the same `RenderContext.publicOnly` flag. See
 [ADR 0019](adr/0019-virtual-tour-immersive-kernel.md).
+
+**v0.9 update:** the frozen `MediaDescriptor` (v0.5, above) gains three new
+_optional_ fields — `checksumSha256`, `byteSize`, `variants` — populated
+whenever the referenced MediaAsset actually went through the real v0.9
+ingestion pipeline (see [ADR 0022](adr/0022-media-ingestion-asset-delivery.md)).
+A pre-v0.9 or seed-inserted MediaAsset simply lacks these fields in its
+frozen descriptor, exactly like it already lacked real dimensions before —
+"we don't always know" is not new, only what we don't always know grew by
+three fields. `checksumSha256` doubles as the delivery URL's fingerprint;
+this is what makes an already-published Revision's images fetchable
+through a stable, cacheable, same-origin URL.
 
 ## Twelve invariants
 

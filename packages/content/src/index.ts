@@ -56,8 +56,9 @@ export {
   getMediaAsset,
   listMediaAssets,
   listMediaAssetsByIds,
+  updateMediaAssetAltText,
 } from "./media-repository";
-export type { CreateMediaAssetInput } from "./media-repository";
+export type { CreateMediaAssetInput, MediaAssetRow } from "./media-repository";
 
 export {
   addBlock,

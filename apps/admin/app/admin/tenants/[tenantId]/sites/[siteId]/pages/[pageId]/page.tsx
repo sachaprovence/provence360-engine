@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { blockRegistry, getPage } from "@provence360/content";
+import { blockRegistry, getPage, listMediaAssets } from "@provence360/content";
 import { withTenantPage } from "@/lib/actor";
+import { resolveMediaThumbnail } from "@/lib/media-thumbnail";
 import { AddBlockForm } from "./add-block-form";
 import { BlocksEditor, type BlockRow } from "./blocks-editor";
 import { PageMetaForm } from "./page-meta-form";
@@ -15,14 +16,36 @@ export default async function PageEditorPage({
 }) {
   const { tenantId, siteId, pageId } = await params;
 
-  const { page, canUpdate } = await withTenantPage(tenantId, "page.read", async (tx, actor) => ({
-    page: await getPage(tx, pageId),
-    canUpdate: actor.permissions.has("page.update"),
-  }));
+  const { page, canUpdate, mediaList } = await withTenantPage(
+    tenantId,
+    "page.read",
+    async (tx, actor) => {
+      const canUpdateNow = actor.permissions.has("page.update");
+      // Only fetched for an editor who can actually use the Hero/Gallery
+      // media pickers below — same "skip the extra read when it can't be
+      // used" convention the v0.8 Branding form already established (see
+      // sites/[siteId]/page.tsx).
+      const mediaRows = canUpdateNow ? await listMediaAssets(tx) : [];
+      return {
+        page: await getPage(tx, pageId),
+        canUpdate: canUpdateNow,
+        mediaList: mediaRows,
+      };
+    },
+  );
 
   if (!page || page.siteId !== siteId) notFound();
 
   const blocks = page.content as BlockRow[];
+  const mediaOptions = mediaList.map((asset) => {
+    const thumbnail = resolveMediaThumbnail(asset);
+    return {
+      id: thumbnail.id,
+      previewUrl: thumbnail.previewUrl,
+      altText: thumbnail.altText,
+      originalFilename: thumbnail.originalFilename,
+    };
+  });
   const availableBlocks = blockRegistry.list().map((definition) => ({
     type: definition.type,
     version: definition.version,
@@ -56,6 +79,7 @@ export default async function PageEditorPage({
         pageId={pageId}
         blocks={blocks}
         canEdit={canUpdate}
+        mediaOptions={mediaOptions}
       />
 
       {canUpdate ? (

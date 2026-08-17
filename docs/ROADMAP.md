@@ -139,6 +139,49 @@ arbitrary CSS. See [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 - **A minimal admin "Appearance" section** on the Site detail page — brand name, colors, typography, radius/spacing, button/section style, logo/favicon picker — reusing the existing `theme.read`/`.update` permissions, no new namespace.
 - **A durable monorepo pattern**: a `@provence360/themes/branding` package-export subpath, so a client component can import pure design-token constants without pulling the database driver into the browser bundle.
 
+## What Foundation v0.9 adds
+
+The Media Ingestion, Asset Lifecycle & Delivery Kernel — turns `MediaAsset`
+from a reference-only abstraction into a real, tenant-isolated upload,
+storage, and delivery pipeline. See
+[ADR 0022](adr/0022-media-ingestion-asset-delivery.md) and
+[docs/MEDIA.md](MEDIA.md).
+
+- **`packages/media`** — a new package owning upload intents, object
+  storage, real file validation, variant generation, and delivery.
+  `packages/content` keeps owning the `MediaAsset` entity itself.
+- **Two-phase upload** — `media_uploads` (migration 0016), a short-lived,
+  one-shot, RLS-scoped upload intent, distinct from `media_assets`: a
+  MediaAsset is created only once real bytes have been decoded, validated,
+  and processed.
+- **Real file validation** — a genuine `sharp` decode, format allowlisted
+  _after_ decode (`jpeg`/`png`/`webp`; SVG always rejected, AVIF excluded
+  since this build's `sharp` has no AVIF codec), size/pixel-count limits,
+  a SHA-256 checksum computed from the actually-stored bytes.
+- **`ObjectStorage` abstraction** — `MemoryObjectStorage` (default, tests
+  and local dev) and `S3ObjectStorage` (AWS S3/R2/MinIO-compatible),
+  behind one narrow interface; no provider-specific type anywhere else.
+- **A closed, versioned variant registry** — thumbnail/small/medium/large,
+  never upscaled, never a separate table.
+- **Same-origin, fingerprint-gated delivery** — `/media/{assetId}/{fingerprint}/{variant}`,
+  resolved by one shared core both apps' routes call; `Cache-Control:
+immutable` only when the URL is genuinely content-addressed.
+- **Publication snapshot v4** — the frozen `MediaDescriptor` gains optional
+  `checksumSha256`/`byteSize`/`variants`; historical v3 Revisions still
+  parse, purely relabeled forward.
+- **Responsive rendering** — `resolveResponsiveImage` (`packages/renderer`)
+  picks a real variant and builds a real `srcSet`, with a byte-for-byte
+  fallback to the pre-v0.9 behavior for any legacy asset.
+- **Admin Media Library + reusable `MediaPicker`/`GalleryMediaPicker`** —
+  upload, thumbnail grid, and a visual picker wired into SiteBranding
+  logo/logoDark/favicon and Hero/Gallery block editing — no more
+  manually-typed MediaAsset UUIDs on those surfaces.
+- **Two real, previously-invisible bugs found and fixed** during this
+  phase's own end-to-end testing: a transaction-rollback fail-marking bug,
+  and a Next.js cross-bundle module-singleton bug (fixed via `globalThis`
+  memoization) — both documented in ADR 0022 as durable, reusable
+  patterns for this codebase.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -149,12 +192,12 @@ requirements a later phase hasn't settled yet:
 - **The booking engine.** No availability, pricing, or reservation flow — the entire reason this platform exists, and still entirely out of scope.
 - **An AI content generator.** None — content is authored by hand through the Site Editor.
 - **Airbnb/Booking.com integrations.** No channel management, no iCal sync.
-- **A real media upload/CDN pipeline.** `MediaAsset` is a stable reference; there's no upload flow, image transform, or CDN behind it. See [ADR 0012](adr/0012-media-asset-and-amenity-catalog.md).
 - **Rich text.** Text content is plain text only (`\n`-separated paragraphs); no structured/sanitized rich-text block yet. See [docs/RENDERING.md#security](RENDERING.md#security).
 - **A translator UI / per-locale routing.** See [docs/LOCALIZATION.md](LOCALIZATION.md).
 - **The automatic site generator.** Provisioning a new Site (and its Properties/Units/Pages) is a manual admin/seed-script action, not a guided or automated flow.
 - **A platform super-admin.** No way to act across every tenant through the web application — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md).
 - **A drag-and-drop theme builder, custom CSS/JS, a theme marketplace, many pre-built templates, complex animations, a responsive layout editor, or AI-generated/Figma-imported theming.** v0.8 ships a closed, validated token kernel only — see [ADR 0021](adr/0021-site-theme-branding-design-system.md).
+- **Video transcoding, adaptive streaming, PDF processing, remote-URL image import, AI image tagging/object recognition, photo retouching, a crop editor, a full proprietary CDN, or an enterprise DAM.** v0.9 is an image-first ingestion/delivery kernel only — see [ADR 0022](adr/0022-media-ingestion-asset-delivery.md).
 
 ## Known gaps left for the next phase
 
@@ -165,6 +208,9 @@ requirements a later phase hasn't settled yet:
 - **Real observability.** `packages/observability`'s logger is structured JSON-lines to stdout; no OTel export, no tracing, no metrics backend, no request-id correlation across service boundaries yet.
 - **Worker jobs.** `apps/worker` is a heartbeat-only process boundary — domain re-verification, release publishing, session cleanup, and any other scheduled work land here once there's something to schedule.
 - **A platform super-admin.** Deliberately undesigned so far — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md) for why it needs its own identity concept rather than an extension of `MembershipRole`.
+- **No MediaAsset deletion UI or safe garbage collection.** `deleteMediaAsset` exists but is not exposed anywhere in v0.9's Admin Media Library — reference-counting across every Draft and historical Revision before allowing a delete is deferred to a future phase. See [ADR 0022](adr/0022-media-ingestion-asset-delivery.md), Decision 14.
+- **`S3ObjectStorage` has no live-bucket integration test.** This sandboxed development environment has no Docker/MinIO available; the adapter is exercised via TypeScript's structural typing against `ObjectStorage` only. Smoke-test manually against a real bucket before relying on it in production. See [docs/MEDIA.md](MEDIA.md).
+- **No structured admin form for SEO's `ogImageMediaId` or VirtualTour's `posterMediaId`.** Both remain editable only through the generic block-props JSON textarea — the v0.9 `MediaPicker` was wired into Hero/Gallery/SiteBranding only, per ADR 0022, Decision 13.
 - **No component/block-level theme variants.** Only the token layer ships in v0.3 — see [docs/THEMES.md](THEMES.md).
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
 - **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.

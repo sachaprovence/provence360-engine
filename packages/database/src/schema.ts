@@ -490,6 +490,34 @@ export const mediaAssets = pgTable(
     height: integer("height"),
     altText: text("alt_text"),
     metadata: jsonb("metadata").notNull().default({}),
+    // v0.9 — Media Ingestion, Asset Lifecycle & Delivery Kernel (see
+    // docs/adr/0022-media-ingestion-asset-delivery.md). All four nullable:
+    // a pre-v0.9 or seed/test-inserted row (bypassing the real ingestion
+    // pipeline) has none of these, exactly like a pre-v0.9 row already has
+    // no `width`/`height` guarantee. NULL means "no fingerprint/variant
+    // data available," never "zero-byte file."
+    //
+    // checksumSha256: the file's own content digest — set once, at
+    // ingestion, from the actually-stored bytes (never client-declared).
+    // Doubles as the `fingerprint` the delivery URL embeds (see
+    // packages/media/src/delivery): different bytes -> different URL,
+    // which is what makes an `immutable` Cache-Control header honest.
+    checksumSha256: text("checksum_sha256"),
+    // The real, stored byte count of the *original* file (never a
+    // client-declared Content-Length).
+    byteSize: integer("byte_size"),
+    // Closed, versioned registry of generated derivatives (thumbnail/
+    // small/medium/large — see `packages/media/src/processing/variants.ts`
+    // for the exact token set and `MediaVariantsV1` for the validated
+    // shape). `{}` means "no variants were generated" (a non-image asset,
+    // or a pre-v0.9 row) — never partially-populated by anything outside
+    // the ingestion pipeline's own finalize step.
+    variants: jsonb("variants").notNull().default({}),
+    // The uploader's own filename, kept purely as a display hint (e.g.
+    // "villa-hero.jpg" in the Media Library grid) — NEVER used to derive
+    // `storageKey` or any other authority-bearing value. See ADR 0022,
+    // "object keys."
+    originalFilename: text("original_filename"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -497,6 +525,89 @@ export const mediaAssets = pgTable(
     uniqueIndex("media_assets_tenant_id_id_uidx").on(t.tenantId, t.id),
     index("media_assets_tenant_id_idx").on(t.tenantId),
     pgPolicy("tenant_isolation_media_assets", {
+      for: "all",
+      to: appRole,
+      using: tenantMatch,
+      withCheck: tenantMatch,
+    }),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// media_uploads — v0.9's upload *intent*: a short-lived, one-shot claim
+// check for "a file is about to be uploaded to this exact storage key."
+// Deliberately a separate table from `media_assets`, not a status column
+// on it: an intent that never gets finalized (abandoned upload, expired
+// tab, malicious probing) must never become, or even resemble, a real
+// MediaAsset — `media_assets` stays exactly what ADR 0012 designed it to
+// be (a reference to a *validated, finalized* file), and this table owns
+// the pending/expired/failed states that concept was never meant to hold.
+// See docs/adr/0022-media-ingestion-asset-delivery.md, "upload in two
+// phases."
+// ---------------------------------------------------------------------------
+export const mediaUploadStatusValues = ["pending", "finalized", "expired", "failed"] as const;
+export type MediaUploadStatus = (typeof mediaUploadStatusValues)[number];
+
+export const mediaUploads = pgTable(
+  "media_uploads",
+  {
+    id: id(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    // Server-generated at intent-creation time (see
+    // packages/media/src/upload/object-keys.ts) — the client never chooses
+    // this value, and it is unique per tenant so one tenant can never
+    // collide with (or overwrite) another's in-flight upload.
+    storageKey: text("storage_key").notNull(),
+    status: text("status", { enum: mediaUploadStatusValues }).notNull().default("pending"),
+    // A hard ceiling enforced at finalize time against the *actually
+    // stored* byte count — never trusted from a client-sent
+    // Content-Length header.
+    maxBytes: integer("max_bytes").notNull(),
+    // The browser-reported Content-Type at intent creation — informative
+    // only (surfaced in observability/error messages), never trusted as
+    // the file's real type. Finalize always re-derives the real type from
+    // the stored bytes themselves (see packages/media/src/validation).
+    declaredMimeType: text("declared_mime_type"),
+    originalFilename: text("original_filename"),
+    // Set only once finalize succeeds — the intent's one, one-way link to
+    // the MediaAsset it produced. Composite FK (tenant_id, media_asset_id)
+    // against `media_assets`' own composite unique index, so a finalized
+    // intent can never point at another tenant's asset even under a bug
+    // upstream of this constraint.
+    mediaAssetId: uuid("media_asset_id"),
+    // Short TTL from creation (see packages/media's `UPLOAD_INTENT_TTL_MS`)
+    // — an intent that outlives this without being finalized is eligible
+    // for `cleanupExpiredMediaUploads` and can never be finalized after
+    // this instant, even if the underlying bytes did eventually arrive.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("media_uploads_tenant_storage_key_uidx").on(t.tenantId, t.storageKey),
+    index("media_uploads_tenant_id_idx").on(t.tenantId),
+    // Scanned by cleanupExpiredMediaUploads: "every still-pending intent
+    // whose expiresAt has passed."
+    index("media_uploads_status_expires_at_idx").on(t.status, t.expiresAt),
+    foreignKey({
+      columns: [t.tenantId, t.mediaAssetId],
+      foreignColumns: [mediaAssets.tenantId, mediaAssets.id],
+      name: "media_uploads_tenant_media_asset_fk",
+    }),
+    check("media_uploads_max_bytes_positive_ck", sql`${t.maxBytes} > 0`),
+    // A row without a linked MediaAsset must not be `finalized`, and a
+    // `finalized` row must have one — the DB itself refuses the
+    // half-finished states a bug could otherwise leave behind.
+    check(
+      "media_uploads_finalized_has_asset_ck",
+      sql`(${t.status} = 'finalized') = (${t.mediaAssetId} is not null)`,
+    ),
+    pgPolicy("tenant_isolation_media_uploads", {
       for: "all",
       to: appRole,
       using: tenantMatch,
