@@ -13,3 +13,5 @@ export { getResolverDb, closeResolverPool } from "./client-resolver";
 export { loadDotEnv } from "./load-env";
 export { checkDatabaseHealth } from "./health";
 export type { DatabaseHealthResult } from "./health";
+export { assertSeedSafeTarget } from "./seed-safety";
+export type { SeedSafetyEnv } from "./seed-safety";

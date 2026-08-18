@@ -18,11 +18,16 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   const { logger } = await import("@provence360/observability");
-  const { findDangerousProductionConfig, loadEnv, loadMediaEnv } =
+  const { findDangerousProductionConfig, loadWebEnv, loadMediaEnv } =
     await import("@provence360/validation");
 
   try {
-    const env = loadEnv();
+    // v1.0.1 — brief SUJET D: `loadWebEnv()` validates only what apps/web
+    // actually consumes (resolver + app DB roles, platform config) — not
+    // the auth role or the bare schema-owning DATABASE_URL, neither of
+    // which web ever touches. See packages/validation/src/env.ts's
+    // `webEnvSchema` doc comment for the real import trace behind this.
+    const env = loadWebEnv();
     const media = loadMediaEnv();
     const { errors, warnings } = findDangerousProductionConfig({ ...env, ...media });
     for (const warning of warnings) {

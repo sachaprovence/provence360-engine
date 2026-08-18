@@ -1,6 +1,6 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { loadDbEnv } from "@provence360/validation";
+import { loadAuthDbEnv } from "@provence360/validation";
 import * as schema from "./schema";
 
 // The narrow, pre-tenant-context connection for identity and authorization
@@ -15,7 +15,9 @@ let pool: ReturnType<typeof postgres> | undefined;
 
 function getPool() {
   if (!pool) {
-    const env = loadDbEnv();
+    // v1.0.1 — brief SUJET D: parses only DATABASE_URL_AUTH — see
+    // packages/validation/src/env.ts's `loadAuthDbEnv` doc comment.
+    const env = loadAuthDbEnv();
     pool = postgres(env.DATABASE_URL_AUTH, { max: 10, connect_timeout: 10, idle_timeout: 60 });
   }
   return pool;

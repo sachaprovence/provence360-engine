@@ -1,4 +1,4 @@
-import { loadDotEnv, sites } from "@provence360/database";
+import { assertSeedSafeTarget, loadDotEnv, sites } from "@provence360/database";
 import { closeAdminPool, getAdminDb } from "@provence360/database/admin";
 import { closeAppPool } from "@provence360/database/client-app";
 import { withTenantContext } from "@provence360/tenant";
@@ -19,6 +19,7 @@ import { publishSite } from "../publish";
 // `db:seed` — see package.json and .github/workflows/ci.yml.
 
 loadDotEnv();
+assertSeedSafeTarget();
 
 async function main(): Promise<void> {
   const db = getAdminDb();

@@ -19,6 +19,22 @@ export interface S3ObjectStorageConfig {
   forcePathStyle?: boolean;
 }
 
+// v1.0.1 — brief SUJET B: through v1.0, this class never bounded how long a
+// single request could take — `@smithy/node-http-handler`'s own defaults
+// for `connectionTimeout`/`requestTimeout` are `undefined` (no timeout at
+// all), confirmed by reading its source. Combined with the
+// virtual-hosted-style DNS failure mode fixed in
+// `packages/validation/src/env.ts` (a hostname that will never resolve has
+// no inherent ceiling on how long that failure takes), a single stalled
+// `put`/`get` could hang a request handler indefinitely — in the smoke
+// script, in a real upload/finalize path, in anything that calls this
+// class. These are deliberately generous (media payloads run up to the
+// package's own 15 MiB `MAX_UPLOAD_BYTES` ceiling — see
+// `packages/media/src/domain/constants.ts`) — the goal is "every call
+// eventually fails with a clear error" as a floor, not a tight SLA.
+const CONNECTION_TIMEOUT_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+
 /**
  * The one place any S3 SDK call lives (brief §4: "ne disperse jamais des
  * appels SDK S3 dans le repository"). Works against real AWS S3 or any
@@ -51,6 +67,10 @@ export class S3ObjectStorage implements ObjectStorage {
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
+      },
+      requestHandler: {
+        connectionTimeout: CONNECTION_TIMEOUT_MS,
+        requestTimeout: REQUEST_TIMEOUT_MS,
       },
     });
   }

@@ -3,6 +3,7 @@ import { hash as argon2Hash } from "@node-rs/argon2";
 import { eq, sql } from "drizzle-orm";
 import { closeAdminPool, getAdminDb } from "../admin/index";
 import { loadDotEnv } from "../load-env";
+import { assertSeedSafeTarget } from "../seed-safety";
 import {
   amenities,
   auditLogs,
@@ -54,6 +55,7 @@ const SEED_PASSWORD = "provence360-seed-only-not-a-real-password";
 const ARGON2_OPTIONS = { memoryCost: 19456, timeCost: 2, parallelism: 1 } as const;
 
 loadDotEnv();
+assertSeedSafeTarget();
 
 function blockId(): string {
   return `blk_${randomUUID()}`;

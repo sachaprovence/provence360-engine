@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { loadDbEnv } from "@provence360/validation";
+import { loadResolverDbEnv } from "@provence360/validation";
 
 // v1.0 — brief §8/§36: readiness needs to know "is the database reachable"
 // without borrowing a connection from any of the long-lived, tenant-scoped
@@ -27,7 +27,7 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealthResult> {
   const startedAt = Date.now();
   let sql: ReturnType<typeof postgres> | undefined;
   try {
-    const env = loadDbEnv();
+    const env = loadResolverDbEnv();
     sql = postgres(env.DATABASE_URL_RESOLVER, {
       max: 1,
       connect_timeout: READINESS_TIMEOUT_SECONDS,
