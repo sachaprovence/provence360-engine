@@ -10,12 +10,14 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:deployment": "node scripts/smoke-deployment.mjs"
   },
   "dependencies": {
     "@provence360/database": "workspace:*",
     "@provence360/domains": "workspace:*",
     "@provence360/media": "workspace:*",
+    "@provence360/observability": "workspace:*",
     "@provence360/publishing": "workspace:*",
     "@provence360/rentals": "workspace:*",
     "@provence360/renderer": "workspace:*",

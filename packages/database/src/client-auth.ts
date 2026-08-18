@@ -16,7 +16,7 @@ let pool: ReturnType<typeof postgres> | undefined;
 function getPool() {
   if (!pool) {
     const env = loadDbEnv();
-    pool = postgres(env.DATABASE_URL_AUTH, { max: 10 });
+    pool = postgres(env.DATABASE_URL_AUTH, { max: 10, connect_timeout: 10, idle_timeout: 60 });
   }
   return pool;
 }

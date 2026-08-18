@@ -390,6 +390,42 @@ the security-relevant guarantees:
   gap v0.9 disclosed but left open: the actual production storage adapter
   had zero test coverage against real S3 wire behavior.
 
+## Production hardening (v1.0)
+
+See [docs/DEPLOYMENT.md](DEPLOYMENT.md) for the full operational detail —
+this section is the security-relevant summary.
+
+- **Eager, fail-closed production configuration.** `findDangerousProductionConfig`
+  (`packages/validation/src/env.ts`) refuses to start a `NODE_ENV=production`
+  process using the checked-in dev/CI database credentials, `ROOT_DOMAIN=localhost`,
+  or the default in-memory media storage — a hard `process.exit(1)` at
+  startup, verified empirically to actually exit rather than leave a broken
+  process serving 500s (see docs/DEPLOYMENT.md).
+- **General-purpose security headers**, alongside the pre-existing CSP
+  `frame-src` allowlist (v0.7): `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
+  `Permissions-Policy`, `frame-ancestors` (`'self'` on `apps/web`, `'none'`
+  on `apps/admin` — a control-plane app has a sharper clickjacking
+  incentive against it and no legitimate reason to ever be iframed), and
+  conditional HSTS in production. Regression-tested — see
+  `packages/virtual-tours/src/csp-frame-origins.test.ts`.
+- **Host header trust, made explicit.** `apps/web`'s hostname resolver
+  (`packages/domains/src/resolver.ts`, unchanged since v0.1) reads Next.js's
+  own `Host` header — never `X-Forwarded-Host` or any other
+  client-suppliable header — for tenant resolution. v1.0 documents this
+  explicitly as a deployment requirement (the reverse proxy must forward
+  the genuine public hostname as `Host`) rather than leaving it an
+  unstated assumption. See docs/DEPLOYMENT.md, "Domains & TLS."
+- **Health endpoints never leak infrastructure detail.** `/health/ready`'s
+  database check returns only `"ok"`/`"failed"` per dependency — never a
+  connection string, stack trace, or raw driver error. Verified by a real
+  failure-injection test (Postgres stopped, response inspected) — see
+  `packages/database/src/health.test.ts`.
+- **No rate limiting beyond login**, still true after v1.0 — see "Known
+  gaps" below and docs/DEPLOYMENT.md, "Rate limiting & multi-instance
+  safety" for why an in-memory limiter elsewhere would have been worse
+  than no limiter at all under more than one instance.
+
 ## Known gaps (tracked, not hidden)
 
 - **No password-reset / email-verification flow.** A user is provisioned by an existing tenant OWNER/ADMIN or the seed script; there is no self-service "forgot password." See [docs/AUTHENTICATION.md](AUTHENTICATION.md).

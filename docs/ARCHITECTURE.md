@@ -153,10 +153,18 @@ everywhere else. See [docs/AUTHENTICATION.md](AUTHENTICATION.md) and
 
 None of these need a compiled `dist/`. Adding one would mean either a
 `turbo run build` step before every `dev`/`test` invocation (slower inner
-loop, another thing to forget) or a `dist/` that silently goes stale. The
-one place a compiled output does make sense is `apps/worker`, which is
-meant to run as its own container in production — its `build` script
-(`tsc -p tsconfig.json`) is real, not a stub.
+loop, another thing to forget) or a `dist/` that silently goes stale.
+
+`apps/worker` is the one place this bit in production (v1.0): its `build`
+script (`tsc -p tsconfig.json`) is real and still runs (`turbo run build`
+depends on it as a genuine type-check gate), but a plain `node dist/index.js`
+cannot actually resolve `@provence360/observability`'s own raw, extensionless
+`.ts` imports (the module resolution that fails is inside the _dependency's_
+source, not the worker's own output — `tsc` compiling the worker's one file
+correctly doesn't touch that). `apps/worker`'s `start` script runs `tsx
+src/index.ts` instead — the same consumption mode every other `packages/*`
+consumer here already uses — so production runs the exact same way `dev`
+does, just without the watch. See docs/DEPLOYMENT.md.
 
 ## Data model
 
