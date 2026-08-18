@@ -8,23 +8,27 @@ runbook specifically.
 
 ## What runs where
 
-| Process        | Source                           | Serves                                                                               | Needs                                                                                                         |
-| -------------- | -------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `apps/web`     | `apps/web`                       | the public site (`Host -> DomainResolver -> Site -> Published Revision -> Renderer`) | Postgres (`DATABASE_URL_APP`, `DATABASE_URL_RESOLVER`, `DATABASE_URL_AUTH`, `DATABASE_URL`*), object storage  |
-| `apps/admin`   | `apps/admin`                     | the Control Plane (login, editing, publishing, media library)                        | same four Postgres roles, object storage                                                                      |
-| `apps/worker`  | `apps/worker`                    | background process boundary — currently a heartbeat only, see docs/ROADMAP.md        | same four Postgres roles (validated at startup even though nothing is queried yet — see "Environments" below) |
-| PostgreSQL     | external, unmanaged by this repo | the one source of truth, RLS-enforced                                                | —                                                                                                             |
-| Object storage | external, S3-compatible          | media bytes                                                                          | —                                                                                                             |
+| Process        | Source                           | Serves                                                                               | Needs                                                                                       |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `apps/web`     | `apps/web`                       | the public site (`Host -> DomainResolver -> Site -> Published Revision -> Renderer`) | Postgres (`DATABASE_URL_APP`, `DATABASE_URL_RESOLVER`), object storage                      |
+| `apps/admin`   | `apps/admin`                     | the Control Plane (login, editing, publishing, media library)                        | Postgres (`DATABASE_URL_APP`, `DATABASE_URL_RESOLVER`, `DATABASE_URL_AUTH`), object storage |
+| `apps/worker`  | `apps/worker`                    | background process boundary — currently a heartbeat only, see docs/ROADMAP.md        | nothing beyond `NODE_ENV` today — no database access yet, see "Configuration" below         |
+| PostgreSQL     | external, unmanaged by this repo | the one source of truth, RLS-enforced                                                | —                                                                                           |
+| Object storage | external, S3-compatible          | media bytes                                                                          | —                                                                                           |
 
-\* `DATABASE_URL` (the schema-owning, RLS-bypassing role) is only ever
-actually _used_ by migration/seed scripts, never by a request-serving
-process — but every process's env still validates its presence, because
-`loadEnv()`/`loadDbEnv()` validate all four roles as one schema. This is a
-pre-existing v0.1 decision (a single `dbEnvSchema`, not four), not
-something v1.0 introduced; it does mean every deployed process's
-environment carries the migration credential even where it's never
-dereferenced. Documented here rather than silently accepted — see
-LIMITATIONS in the v1.0 final report.
+**v1.0.1** — through v1.0, every process validated the FULL four-role
+`dbEnvSchema` regardless of which roles it actually used (`DATABASE_URL`,
+the schema-owning/migration role, was required by every deployed process's
+environment even though only migration/seed scripts ever dereference it —
+and the worker required all four despite using none). Fixed for real, not
+just at the startup-validation layer: `packages/database`'s three per-role
+pool getters (`client-app.ts`/`client-resolver.ts`/`client-auth.ts`) now
+each parse only their own variable too, so a narrower per-process schema
+couldn't have been undone by the first real request that touched one of
+them. See `packages/validation/src/env.ts`'s `webEnvSchema`/
+`adminEnvSchema`/`workerEnvSchema` (built from a real audit of each app's
+imports) and this release's final report, PER-PROCESS ENVIRONMENT
+VALIDATION, for the full trace.
 
 Nothing here is tied to a specific cloud provider. Any host that can run a
 long-lived Node 22 process, reach a Postgres server, and reach an
@@ -49,12 +53,20 @@ validate. Add it the day a second real target exists, not before (brief
 
 ## Configuration & production guard-rails
 
-Every process validates its full environment **eagerly, at startup** —
+Every process validates **its own** environment **eagerly, at startup** —
 `apps/web` and `apps/admin` via `instrumentation.ts` (Next.js's
 once-per-process, before-any-request hook), `apps/worker` via the top of
-`src/index.ts`. A missing or malformed variable throws immediately; see
-`packages/validation/src/env.ts` for the categorized schemas (`dbEnvSchema`,
-`platformEnvSchema`, `mediaEnvSchema`).
+`src/index.ts`. A missing or malformed variable throws immediately.
+
+**v1.0.1** — each process validates only what it actually needs, not a
+one-size-fits-all shared schema: `apps/web` uses `loadWebEnv()`,
+`apps/admin` uses `loadAdminEnv()`, `apps/worker` uses `loadWorkerEnv()`
+(today just `NODE_ENV` — see "What runs where" above). All three are built
+from the same shared primitives in `packages/validation/src/env.ts`
+(`resolverDbEnvSchema`/`appDbEnvSchema`/`authDbEnvSchema`/
+`adminDbEnvSchema`, `nodeEnvSchema`, `rootDomainSchema`) rather than being
+three independently hand-written schemas. Migration/seed scripts still use
+the full `dbEnvSchema`/`loadDbEnv()` (they genuinely touch every role).
 
 Beyond per-variable shape, `findDangerousProductionConfig()` catches
 _combinations_ that are individually valid but still wrong in production:
@@ -125,10 +137,30 @@ don't have the privilege and would fail loudly if misused (not silently).
 `pnpm db:seed` and `pnpm db:publish-seed` are **development/test fixtures
 only** — two demo tenants, seed users with a shared, published,
 `docs/AUTHENTICATION.md`-documented non-secret password. **Never run either
-against a production database.** There is no environment gate preventing
-this today (the scripts don't check `NODE_ENV`) — this is a real,
-documented gap: the seed scripts trust the operator, the same way
-`DATABASE_URL` itself does. See LIMITATIONS in the final report.
+against a production database.**
+
+**v1.0.1** — both are now guarded by `assertSeedSafeTarget()`
+(`packages/database/src/seed-safety.ts`), called before either script's
+first write. `NODE_ENV=production` is refused unconditionally, with no
+override. Outside production, the guard requires at least one positive
+signal that the target is genuinely a dev/test database: CI detected
+(`CI=true`/`CI=1`) or the database name matching this repo's own `_dev`/
+`_test` naming convention (`provence360_dev`, `provence360_test`, ...). A
+target it cannot positively vouch for is refused the same as a production
+one — "ambiguous" is not "probably fine." A refusal happens before any
+connection is opened for a write, so it writes nothing — see this
+release's final report, SEED SAFETY, for the real, non-simulated
+zero-writes verification. `db:migrate` and `db:setup-roles` are
+**deliberately not gated** by this guard — production must still be able to
+run them (see "Deployment strategy" below).
+
+**The full pipeline differs by target**:
+
+- **Production**: `db:migrate` then `db:setup-roles`. Never `db:seed` or
+  `db:publish-seed` — refused by the guard above even if attempted.
+- **Development / test / CI**: `db:migrate`, `db:setup-roles`, `db:seed`,
+  `db:publish-seed`, in that order (see `.github/workflows/ci.yml`'s
+  "Prepare dev database for e2e" step for the exact CI sequence).
 
 Migration failure behavior: `migrate.ts` exits non-zero and logs the real
 Postgres error to stderr; nothing about the database is left ambiguous —
@@ -224,16 +256,25 @@ a `finally` regardless of outcome. Fails loudly (non-zero exit, real error
 message) if any step fails — including printing which step failed, never
 the credentials used.
 
-**This was run against `s3rver` locally (the same real S3-REST-API test
-double v0.9.1's integration suite uses) to prove the script itself is
-correct** — it was **not** run against a real AWS S3, Cloudflare R2, or
-MinIO bucket, because no such credentials exist in this environment. Run
-it yourself against your actual bucket before a first production deploy:
+**v1.0 claimed this had been run against `s3rver` locally to prove the
+script itself was correct — that claim was inaccurate.** v1.0.1's own
+investigation found it had actually hung on `put` in that manual test; see
+this release's final report, STORAGE SMOKE ROOT CAUSE, for the full
+mechanism (virtual-hosted-style S3 addressing against a non-AWS endpoint
+with no request timeout configured, both now fixed) and reproduction. It
+**has now** genuinely been run against a real, separately-running `s3rver`
+instance (the same real S3-REST-API test double v0.9.1's integration suite
+uses) end to end — put/get/list/delete, real HTTP, real bytes, PASSED — but
+still **not** against a real AWS S3, Cloudflare R2, or MinIO bucket, because
+no such credentials exist in this environment. Run it yourself against your
+actual bucket before a first production deploy:
 
 ```
 MEDIA_STORAGE_PROVIDER=s3 \
 S3_REGION=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
-[S3_ENDPOINT=... S3_FORCE_PATH_STYLE=true]  # only for a non-AWS endpoint (R2/MinIO)
+[S3_ENDPOINT=...]  # only for a non-AWS endpoint (R2/MinIO); path-style
+                    # addressing is now the automatic default whenever this
+                    # is set (v1.0.1 — see docs/MEDIA.md)
 pnpm --filter @provence360/media run smoke:storage
 ```
 
@@ -358,10 +399,15 @@ beyond login) — both stated above rather than discovered silently later.
    `docker-compose.yml` in this repo, which is dev-only).
 2. Provision an S3-compatible bucket; run the storage smoke test against
    it (see "Object storage" above) before trusting it.
-3. Set every production environment variable for all three apps — the
-   four `DATABASE_URL*` (real, non-default credentials), `ROOT_DOMAIN`,
-   `NODE_ENV=production`, `MEDIA_STORAGE_PROVIDER=s3` + its `S3_*`
-   variables. **Never** set `MEDIA_ALLOW_MEMORY_IN_PRODUCTION`.
+3. Set each process's own production environment variables — see
+   `.env.example`'s Shared/Database/Web & Admin/Worker/Media sections and
+   docs/DEPLOYMENT.md's "What runs where" table for exactly which
+   `DATABASE_URL*` role(s) each of `apps/web`/`apps/admin`/`apps/worker`
+   actually needs (`DATABASE_URL`, the schema-owning role, is for the
+   migration step below only — no deployed app process needs it), plus
+   `ROOT_DOMAIN`, `NODE_ENV=production`, `MEDIA_STORAGE_PROVIDER=s3` + its
+   `S3_*` variables for web/admin. **Never** set
+   `MEDIA_ALLOW_MEMORY_IN_PRODUCTION`.
 4. Run `pnpm db:migrate && pnpm db:setup-roles` against the production
    database, once.
 5. Build and deploy the three container images (or run each app's `build`

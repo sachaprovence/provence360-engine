@@ -1,6 +1,6 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { loadDbEnv } from "@provence360/validation";
+import { loadAppDbEnv } from "@provence360/validation";
 import * as schema from "./schema";
 
 // Tenant-scoped runtime connection: subject to RLS. Never query this
@@ -17,7 +17,11 @@ let pool: ReturnType<typeof postgres> | undefined;
 
 function getPool() {
   if (!pool) {
-    const env = loadDbEnv();
+    // v1.0.1 — brief SUJET D: parses only DATABASE_URL_APP, not the full
+    // four-role dbEnvSchema — see packages/validation/src/env.ts's
+    // `loadAppDbEnv` doc comment for why this matters for apps/web (which
+    // never has an auth role or the bare schema-owning DATABASE_URL).
+    const env = loadAppDbEnv();
     pool = postgres(env.DATABASE_URL_APP, { max: 10, connect_timeout: 10, idle_timeout: 60 });
   }
   return pool;

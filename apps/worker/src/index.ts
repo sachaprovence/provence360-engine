@@ -1,5 +1,5 @@
 import { logger } from "@provence360/observability";
-import { findDangerousProductionConfig, loadEnv, loadMediaEnv } from "@provence360/validation";
+import { findDangerousProductionConfig, loadWorkerEnv } from "@provence360/validation";
 
 // Foundation v0.1 placeholder: establishes the worker as its own deployable
 // app boundary (own build, own process, own container in a later phase)
@@ -20,9 +20,19 @@ import { findDangerousProductionConfig, loadEnv, loadMediaEnv } from "@provence3
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
 function validateStartupConfig(): void {
-  const env = loadEnv();
-  const media = loadMediaEnv();
-  const { errors, warnings } = findDangerousProductionConfig({ ...env, ...media });
+  // v1.0.1 — brief SUJET D: `loadWorkerEnv()` validates only what the
+  // worker actually consumes today — NODE_ENV, nothing else. No DB role
+  // (see this file's own top comment: no database access exists yet), no
+  // ROOT_DOMAIN (the worker never resolves a hostname), no media config
+  // (it never touches storage) — a Next/web-only variable must never block
+  // worker startup, and this is the concrete fix for that. Still calls
+  // `findDangerousProductionConfig()` for the same reason web/admin do —
+  // fail-fast validate-then-check-dangerous-combos structure preserved —
+  // even though today's minimal env gives it nothing DB/media/domain-
+  // related to flag; the day a real job needs one of those, extending
+  // `workerEnvSchema` makes this check start covering it automatically.
+  const env = loadWorkerEnv();
+  const { errors, warnings } = findDangerousProductionConfig({ ...env });
   for (const warning of warnings) {
     logger.warn("security.dangerous_production_config", { warning });
   }
@@ -63,7 +73,6 @@ try {
   process.exit(1);
 }
 
-logger.info("worker.started", { pid: process.pid });
 const interval = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
 const shutdown = makeShutdown(interval);
 
@@ -72,7 +81,19 @@ function crash(event: string, error: unknown): void {
   shutdown("crash", 1);
 }
 
+// v1.0.1 — brief §31 (worker SIGTERM regression replay), found while
+// writing SUJET D's own worker lifecycle test: registered BEFORE logging
+// "worker.started" below, not after. A SIGTERM sent the instant an
+// observer (an orchestrator, this repo's own test) sees "worker.started"
+// logged used to race a real, if narrow, window where these handlers
+// weren't attached yet — falling back to Node's default (immediate,
+// non-graceful) SIGTERM behavior instead of running `shutdown()`. Ordinary
+// system load was enough to occasionally lose that race, surfaced as an
+// intermittent `exitCode: null` (killed by the raw signal, not
+// `process.exit(0)`) instead of a clean, logged shutdown.
 process.on("SIGINT", () => shutdown("SIGINT", 0));
 process.on("SIGTERM", () => shutdown("SIGTERM", 0));
 process.on("uncaughtException", (error) => crash("worker.crashed", error));
 process.on("unhandledRejection", (error) => crash("worker.crashed", error));
+
+logger.info("worker.started", { pid: process.pid });

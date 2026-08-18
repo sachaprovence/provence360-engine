@@ -7,11 +7,16 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   const { logger } = await import("@provence360/observability");
-  const { findDangerousProductionConfig, loadEnv, loadMediaEnv } =
+  const { findDangerousProductionConfig, loadAdminEnv, loadMediaEnv } =
     await import("@provence360/validation");
 
   try {
-    const env = loadEnv();
+    // v1.0.1 — brief SUJET D: `loadAdminEnv()` validates only what
+    // apps/admin actually consumes (resolver + app + auth DB roles,
+    // platform config) — not the bare schema-owning DATABASE_URL, which
+    // admin never touches (it never migrates). See
+    // packages/validation/src/env.ts's `adminEnvSchema` doc comment.
+    const env = loadAdminEnv();
     const media = loadMediaEnv();
     const { errors, warnings } = findDangerousProductionConfig({ ...env, ...media });
     for (const warning of warnings) {

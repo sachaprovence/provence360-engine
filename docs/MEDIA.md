@@ -70,10 +70,24 @@ S3_BUCKET=your-bucket
 S3_REGION=your-region
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
-# Only needed for a non-AWS endpoint (Cloudflare R2, MinIO, ...):
+# Only needed for a non-AWS endpoint (Cloudflare R2, MinIO, s3rver, ...):
 S3_ENDPOINT=https://...
-S3_FORCE_PATH_STYLE=true   # MinIO and most non-AWS endpoints need this
+# S3_FORCE_PATH_STYLE=true  # v1.0.1: this is now the automatic default
+#                           # whenever S3_ENDPOINT is set — see below.
 ```
+
+**v1.0.1** — `S3_FORCE_PATH_STYLE` now defaults to `true` automatically the
+moment `S3_ENDPOINT` is set, and to `false` when it isn't (real AWS S3);
+setting it explicitly still always wins. Through v1.0 it defaulted to
+`false` unconditionally, which meant the AWS SDK computed
+virtual-hosted-style addressing (`https://<bucket>.<host>/<key>`) against
+any non-AWS endpoint an operator hadn't also remembered to add this
+variable for — a hostname no self-hosted S3-compatible server has real DNS
+for. Combined with `S3ObjectStorage` never configuring a request/connection
+timeout (fixed in the same change — see `s3-object-storage.ts`), that
+failure had no ceiling: this is the exact mechanism behind v1.0's storage
+smoke test appearing to hang on `put` against `s3rver`. See this release's
+final report, STORAGE SMOKE ROOT CAUSE, for the full reproduction.
 
 `loadMediaEnv()` (`packages/validation/src/env.ts`) validates this at
 startup — missing any required `S3_*` field with `MEDIA_STORAGE_PROVIDER=s3`

@@ -1,6 +1,6 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { loadDbEnv } from "@provence360/validation";
+import { loadResolverDbEnv } from "@provence360/validation";
 import * as schema from "./schema";
 
 // Narrow, read-only connection used exclusively by the hostname resolver
@@ -12,7 +12,9 @@ let pool: ReturnType<typeof postgres> | undefined;
 
 function getPool() {
   if (!pool) {
-    const env = loadDbEnv();
+    // v1.0.1 — brief SUJET D: parses only DATABASE_URL_RESOLVER — see
+    // packages/validation/src/env.ts's `loadResolverDbEnv` doc comment.
+    const env = loadResolverDbEnv();
     pool = postgres(env.DATABASE_URL_RESOLVER, { max: 5, connect_timeout: 10, idle_timeout: 60 });
   }
   return pool;

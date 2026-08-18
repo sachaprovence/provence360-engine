@@ -112,11 +112,38 @@ jobs:
   # builds, catching exactly the class of break the v1.0 audit found in
   # apps/worker's own build/start pipeline (see ADR 0023, Decision 2)
   # before it ever reaches a real deployment attempt.
+  #
+  # v1.0.1 — brief SUJET A: a passing build alone was flagged as
+  # insufficient proof — this job now also actually STARTS each built
+  # image and checks its real runtime behavior, on this runner's own
+  # unrestricted Docker daemon (the sandbox this repo's own development
+  # session runs in cannot pull base images at all — its egress policy
+  # blocks the registry CDN — so this GitHub-hosted runner is the only
+  # place in this project's whole toolchain that can genuinely prove
+  # "docker run" works, not just "docker build"). See this release's final
+  # report, DOCKER RUNTIME VALIDATION and WORKER CONTAINER LIFECYCLE, for
+  # what these steps found.
   docker-build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         app: [web, admin, worker]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: provence360
+          POSTGRES_PASSWORD: provence360
+          POSTGRES_DB: provence360_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U provence360 -d provence360_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -126,4 +153,135 @@ jobs:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
           push: false
+          load: true
           tags: provence360-${{ matrix.app }}:ci
+
+      - name: Confirm the image runs as a non-root user
+        run: |
+          uid="$(docker run --rm --entrypoint id provence360-${{ matrix.app }}:ci -u)"
+          echo "Container runs as uid=$uid"
+          if [ "$uid" = "0" ]; then
+            echo "::error::provence360-${{ matrix.app }}:ci runs as root (uid 0)"
+            exit 1
+          fi
+
+      # web/admin: real container start, real HTTP health checks (liveness
+      # never touches the database; readiness genuinely queries Postgres —
+      # the `postgres` service above, via `--network host` so the
+      # container reaches the runner's own `localhost:5432`), then a
+      # clean `docker stop` (SIGTERM, same as an orchestrator would send).
+      # `DATABASE_URL`/`DATABASE_URL_APP`/`DATABASE_URL_AUTH` only need to
+      # be *shape-valid* — the app's own startup validation
+      # (loadWebEnv/loadAdminEnv) requires them, but neither health route
+      # dereferences them (only DATABASE_URL_RESOLVER does, for
+      # readiness — see packages/database/src/health.ts) — so only that
+      # one points at a role that can genuinely run `select 1`.
+      - name: Start container and check health endpoints
+        if: matrix.app == 'web' || matrix.app == 'admin'
+        run: |
+          docker run -d --name runtime-smoke --network host \
+            -e NODE_ENV=production \
+            -e MEDIA_ALLOW_MEMORY_IN_PRODUCTION=true \
+            -e ROOT_DOMAIN=provence360.app \
+            -e DATABASE_URL=postgresql://unused:unused@localhost:5432/provence360_dev \
+            -e DATABASE_URL_APP=postgresql://unused:unused@localhost:5432/provence360_dev \
+            -e DATABASE_URL_AUTH=postgresql://unused:unused@localhost:5432/provence360_dev \
+            -e DATABASE_URL_RESOLVER=postgresql://provence360:provence360@localhost:5432/provence360_dev \
+            provence360-${{ matrix.app }}:ci
+
+          echo "Waiting for the container to answer on :3000 ..."
+          live_ok=false
+          for i in $(seq 1 30); do
+            running="$(docker inspect --format='{{.State.Running}}' runtime-smoke 2>/dev/null || echo false)"
+            if [ "$running" != "true" ]; then
+              echo "::error::container exited early, before ever answering /health/live"
+              break
+            fi
+            if curl -sf http://localhost:3000/health/live > /tmp/live.json 2>/tmp/live.err; then
+              live_ok=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$live_ok" != "true" ]; then
+            echo "::error::GET /health/live never succeeded within 30s"
+            echo "--- container state ---"
+            docker inspect --format='Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' runtime-smoke || true
+            echo "--- container logs ---"
+            docker logs runtime-smoke || true
+            docker rm -f runtime-smoke || true
+            exit 1
+          fi
+          echo "GET /health/live -> $(cat /tmp/live.json)"
+          grep -q '"status":"ok"' /tmp/live.json || {
+            echo "::error::unexpected /health/live body"
+            docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
+
+          curl -sf http://localhost:3000/health/ready > /tmp/ready.json || {
+            echo "::error::GET /health/ready failed"
+            docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
+          echo "GET /health/ready -> $(cat /tmp/ready.json)"
+          grep -q '"status":"ok"' /tmp/ready.json || {
+            echo "::error::unexpected /health/ready body"
+            docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
+
+          docker logs runtime-smoke
+          docker stop runtime-smoke
+          exit_code="$(docker inspect --format='{{.State.ExitCode}}' runtime-smoke)"
+          echo "Exit code after docker stop: $exit_code"
+          docker rm runtime-smoke
+
+      # worker: today's real minimal env (see
+      # packages/validation/src/env.ts's workerEnvSchema — SUJET D) —
+      # confirms the startup event fires, then a real SIGTERM (via `docker
+      # stop`, exactly what an orchestrator sends) produces a clean,
+      # logged shutdown and exit 0 — not a timeout-forced SIGKILL.
+      - name: Start worker container, verify startup event, send SIGTERM, verify clean exit
+        if: matrix.app == 'worker'
+        run: |
+          docker run -d --name runtime-smoke -e NODE_ENV=production provence360-worker:ci
+
+          echo "Waiting for worker.started ..."
+          for i in $(seq 1 30); do
+            if docker logs runtime-smoke 2>&1 | grep -q worker.started; then break; fi
+            running="$(docker inspect --format='{{.State.Running}}' runtime-smoke 2>/dev/null || echo false)"
+            if [ "$running" != "true" ]; then
+              echo "::error::container exited early, before ever logging worker.started"
+              break
+            fi
+            sleep 1
+          done
+          echo "--- container state ---"
+          docker inspect --format='Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' runtime-smoke || true
+          echo "--- container logs ---"
+          docker logs runtime-smoke
+          docker logs runtime-smoke | grep -q worker.started || {
+            echo "::error::worker.started was never logged"
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
+
+          docker stop --time 10 runtime-smoke
+          exit_code="$(docker inspect --format='{{.State.ExitCode}}' runtime-smoke)"
+          echo "Exit code after docker stop (SIGTERM): $exit_code"
+          docker logs runtime-smoke
+          docker logs runtime-smoke | grep -q worker.shutdown || {
+            echo "::error::worker.shutdown was never logged — SIGTERM did not produce a clean shutdown"
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::worker container exited $exit_code, expected 0"
+            docker rm -f runtime-smoke || true
+            exit 1
+          fi
+          docker rm runtime-smoke
