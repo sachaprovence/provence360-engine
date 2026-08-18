@@ -9,6 +9,20 @@
 # SIGTERM reaches this process as PID 1 instead of a `pnpm` wrapper —
 # verified manually (see the v1.0 final report).
 #
+# v1.0.1 — brief SUJET A: `CMD` invokes `tsx` via `node --import tsx`, not
+# the pnpm-generated `node_modules/.bin/tsx` shim. `tsx` is a direct
+# dependency of `@provence360/worker` only, so pnpm's isolated linker puts
+# its bin shim at `apps/worker/node_modules/.bin/tsx` — never hoisted to
+# the workspace root `node_modules/.bin/` this image actually copies. A
+# real `docker run` of this image (added this release — a `docker build`
+# passing had never proven a container could actually start) failed with
+# `Cannot find module '/app/node_modules/.bin/tsx'` — that path never
+# existed. `--import tsx` uses Node's own module resolution starting from
+# the process's CWD (`/app/apps/worker`, set below), the same proven
+# pattern `apps/worker/src/index.test.ts` already spawns the real process
+# with — no fragile shim path, and `node` still execs directly as CMD, so
+# it's still PID 1 for signal delivery.
+#
 # Build from the repo root:
 #   docker build -f apps/worker/Dockerfile -t provence360-worker .
 
@@ -45,4 +59,4 @@ USER worker
 ENV NODE_ENV=production
 WORKDIR /app/apps/worker
 
-CMD ["/app/node_modules/.bin/tsx", "src/index.ts"]
+CMD ["node", "--import", "tsx", "src/index.ts"]

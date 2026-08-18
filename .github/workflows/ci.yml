@@ -190,20 +190,49 @@ jobs:
             provence360-${{ matrix.app }}:ci
 
           echo "Waiting for the container to answer on :3000 ..."
+          live_ok=false
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/health/live > /tmp/live.json; then break; fi
+            running="$(docker inspect --format='{{.State.Running}}' runtime-smoke 2>/dev/null || echo false)"
+            if [ "$running" != "true" ]; then
+              echo "::error::container exited early, before ever answering /health/live"
+              break
+            fi
+            if curl -sf http://localhost:3000/health/live > /tmp/live.json 2>/tmp/live.err; then
+              live_ok=true
+              break
+            fi
             sleep 1
           done
+          if [ "$live_ok" != "true" ]; then
+            echo "::error::GET /health/live never succeeded within 30s"
+            echo "--- container state ---"
+            docker inspect --format='Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' runtime-smoke || true
+            echo "--- container logs ---"
+            docker logs runtime-smoke || true
+            docker rm -f runtime-smoke || true
+            exit 1
+          fi
           echo "GET /health/live -> $(cat /tmp/live.json)"
-          grep -q '"status":"ok"' /tmp/live.json
+          grep -q '"status":"ok"' /tmp/live.json || {
+            echo "::error::unexpected /health/live body"
+            docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
 
           curl -sf http://localhost:3000/health/ready > /tmp/ready.json || {
             echo "::error::GET /health/ready failed"
             docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
             exit 1
           }
           echo "GET /health/ready -> $(cat /tmp/ready.json)"
-          grep -q '"status":"ok"' /tmp/ready.json
+          grep -q '"status":"ok"' /tmp/ready.json || {
+            echo "::error::unexpected /health/ready body"
+            docker logs runtime-smoke
+            docker rm -f runtime-smoke || true
+            exit 1
+          }
 
           docker logs runtime-smoke
           docker stop runtime-smoke
@@ -224,11 +253,20 @@ jobs:
           echo "Waiting for worker.started ..."
           for i in $(seq 1 30); do
             if docker logs runtime-smoke 2>&1 | grep -q worker.started; then break; fi
+            running="$(docker inspect --format='{{.State.Running}}' runtime-smoke 2>/dev/null || echo false)"
+            if [ "$running" != "true" ]; then
+              echo "::error::container exited early, before ever logging worker.started"
+              break
+            fi
             sleep 1
           done
+          echo "--- container state ---"
+          docker inspect --format='Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' runtime-smoke || true
+          echo "--- container logs ---"
           docker logs runtime-smoke
           docker logs runtime-smoke | grep -q worker.started || {
             echo "::error::worker.started was never logged"
+            docker rm -f runtime-smoke || true
             exit 1
           }
 
@@ -238,10 +276,12 @@ jobs:
           docker logs runtime-smoke
           docker logs runtime-smoke | grep -q worker.shutdown || {
             echo "::error::worker.shutdown was never logged — SIGTERM did not produce a clean shutdown"
+            docker rm -f runtime-smoke || true
             exit 1
           }
           if [ "$exit_code" != "0" ]; then
             echo "::error::worker container exited $exit_code, expected 0"
+            docker rm -f runtime-smoke || true
             exit 1
           fi
           docker rm runtime-smoke
