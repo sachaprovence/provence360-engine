@@ -76,10 +76,7 @@ function createObjectStorageFromEnv(): ObjectStorage {
     // comment for why a production-mode server is used for E2E at all) but
     // are not a real deployment. Explicit and auditable, not baked
     // silently into this check: only the E2E webServer configs set it.
-    if (
-      process.env.NODE_ENV === "production" &&
-      process.env.MEDIA_ALLOW_MEMORY_IN_PRODUCTION !== "true"
-    ) {
+    if (process.env.NODE_ENV === "production" && !env.MEDIA_ALLOW_MEMORY_IN_PRODUCTION) {
       throw new Error(
         "MEDIA_STORAGE_PROVIDER=memory (the default) is not valid with NODE_ENV=production. " +
           "MemoryObjectStorage is an in-process, non-persistent fake — correct for local " +

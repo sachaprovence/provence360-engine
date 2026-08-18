@@ -182,6 +182,25 @@ immutable` only when the URL is genuinely content-addressed.
   memoization) — both documented in ADR 0022 as durable, reusable
   patterns for this codebase.
 
+## What v1.0 — Production Foundation & Deployment Readiness adds
+
+Not a feature release — v1.0 makes the existing engine (v0.1–v0.9.1)
+actually operable: deployable, diagnosable, backed up, restorable, and
+upgradeable without improvisation. No product feature was added. See
+[ADR 0023](adr/0023-production-foundation-deployment-model.md),
+[docs/DEPLOYMENT.md](DEPLOYMENT.md), and
+[docs/BACKUP_RESTORE.md](BACKUP_RESTORE.md).
+
+- **Eager, categorized environment validation at process startup** — every app (and the worker) now validates its full configuration, and a set of known-dangerous production _combinations_ (default dev database credentials, memory storage, `ROOT_DOMAIN=localhost`), before serving a single request, not on first use.
+- **`/health/live` and `/health/ready`** on both `apps/web` and `apps/admin` — liveness never depends on a dependency; readiness checks PostgreSQL only, deliberately not object storage.
+- **A real, previously-broken defect found and fixed**: `apps/worker`'s documented production `build`/`start` pipeline never actually worked (`node dist/index.js` couldn't resolve `packages/*`'s raw-TypeScript imports) — now runs via `tsx`, the same consumption mode every other `packages/*` consumer already used.
+- **Worker lifecycle hardening** — startup config validation, `uncaughtException`/`unhandledRejection` handling, an idempotent shutdown guard, correct exit codes — verified by spawning the real process, not mocked.
+- **Multi-stage Dockerfiles** for all three apps, built via `turbo prune --docker`, non-root, no secrets baked in.
+- **A real backup/restore runbook** with working `pg_dump`/`pg_restore` scripts — the restore script requires typing the target database's own name twice before it touches anything.
+- **A storage smoke-test script** (`pnpm --filter @provence360/media run smoke:storage`) and per-app deployment smoke-test scripts, both real and runnable, separate from the standard test suite.
+- **General-purpose security headers** (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `frame-ancestors`, conditional HSTS) alongside the pre-existing CSP `frame-src` allowlist — regression-tested.
+- **Explicit connection timeouts** on every PostgreSQL pool — previously unset, meaning an unreachable database could hang a request indefinitely.
+
 ## What's still explicitly out of scope
 
 Deferred on purpose — building any of these now would mean guessing at
@@ -196,6 +215,23 @@ requirements a later phase hasn't settled yet:
 - **A translator UI / per-locale routing.** See [docs/LOCALIZATION.md](LOCALIZATION.md).
 - **The automatic site generator.** Provisioning a new Site (and its Properties/Units/Pages) is a manual admin/seed-script action, not a guided or automated flow.
 - **A platform super-admin.** No way to act across every tenant through the web application — see [ADR 0009](adr/0009-platform-admin-vs-tenant-owner.md).
+- **CD (continuous deployment)** — no real cloud target and no deployment credentials exist for this repository. v1.0 ships the Docker images and smoke-test scripts a real CD pipeline would consume; wiring one up is deferred until a real hosting target exists. See docs/DEPLOYMENT.md, "CI / CD".
+
+## Direction after v1.0
+
+Not designed or scheduled yet — the working direction for what comes after
+the production foundation, subject to revision once a real deployment
+surfaces requirements this document can't yet see:
+
+- **v1.1 — Admin & Product Operations**
+- **v1.2 — Lead & Inquiry Kernel**
+- **v1.3 — Rental / Property Experience**
+- **v1.4 — SEO & Discovery**
+- **v1.5 — Analytics & Conversion**
+
+None of these were built as part of v1.0 — see "What's still explicitly
+out of scope" above.
+
 - **A drag-and-drop theme builder, custom CSS/JS, a theme marketplace, many pre-built templates, complex animations, a responsive layout editor, or AI-generated/Figma-imported theming.** v0.8 ships a closed, validated token kernel only — see [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 - **Video transcoding, adaptive streaming, PDF processing, remote-URL image import, AI image tagging/object recognition, photo retouching, a crop editor, a full proprietary CDN, or an enterprise DAM.** v0.9 is an image-first ingestion/delivery kernel only — see [ADR 0022](adr/0022-media-ingestion-asset-delivery.md).
 
@@ -216,5 +252,8 @@ requirements a later phase hasn't settled yet:
 - **No admin UI for editing navigation by hand.** v0.5 ships the typed contract, publish-time resolution, and DB write path (`updateSiteNavigation`) — demonstrated end-to-end via the dev seed (Villas Cassis' Home/Contact nav) and tests, not a form in `apps/admin` yet. See [ADR 0017](adr/0017-site-composition-kernel.md).
 - **No per-unit sleeping-arrangement bulk-import or reordering drag-and-drop.** v0.6 ships real create/update/delete plus a stable `ordering` column, but the admin UI only exposes add + delete (an owner reorders by deleting and re-adding, or a future PATCH-based reorder UI); update on an existing row is exercised at the repository/API level, not yet wired into a form.
 - **VirtualTour provider count: one (Matterport).** The registry is designed for a second provider to be a pure addition (one new `VirtualTourProviderDefinition` + one `register()` call, no other call site changes) — but only Matterport is registered today, matching the brief's own scope.
+- **`pnpm db:seed`/`pnpm db:publish-seed` have no `NODE_ENV` gate.** Both are development/test fixtures (two demo tenants, a shared non-secret seed password — see docs/AUTHENTICATION.md) that trust the operator not to run them against production, the same way `DATABASE_URL` itself does. See docs/DEPLOYMENT.md, "Migrations."
+- **No rate limiting beyond login.** Login has DB-backed, multi-instance-safe brute-force mitigation since v0.2; no other endpoint (media upload, publish actions) has dedicated rate limiting yet. See docs/DEPLOYMENT.md, "Rate limiting & multi-instance safety."
+- **No CD pipeline, no real cloud deployment exercised.** v1.0's Docker images were validated by building the full dependency-pruning/install/build pipeline (not the final container layer itself — the sandbox this was built in cannot run a Docker daemon), and the backup/restore and storage smoke-test scripts were run for real against local infrastructure only, never a real managed Postgres or a real AWS S3/R2/MinIO bucket. See the v1.0 final report's LIMITATIONS section for the complete, itemized list.
 - **No real branded webfonts.** `SiteBranding.typography` is a closed, 5-value, web-safe system-font registry — no `next/font/local`/custom font-file upload yet (deliberately deferred rather than risking an unverified build-time network fetch to Google Fonts in this environment). See [ADR 0021](adr/0021-site-theme-branding-design-system.md).
 - **`cta`/`hero`'s button _color_ still comes from the v0.3 `ThemeTokens` system, not `SiteBranding`.** Only those two blocks' button _shape_ (solid/outline/ghost) is `SiteBranding`-driven — a deliberate backward-compatibility boundary, not an oversight. Every future branding-driven component is free of this constraint. See [ADR 0021](adr/0021-site-theme-branding-design-system.md#decision-10--a-deliberate-documented-boundary-between-the-two-layers-on-existing-blocks).

@@ -7,19 +7,20 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "tsx src/index.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@provence360/observability": "workspace:*"
+    "@provence360/observability": "workspace:*",
+    "@provence360/validation": "workspace:*",
+    "tsx": "4.23.12"
   },
   "devDependencies": {
     "@provence360/config": "workspace:*",
     "@types/node": "22.20.1",
     "eslint": "9.39.5",
-    "tsx": "4.23.12",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

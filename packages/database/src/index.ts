@@ -11,3 +11,5 @@ export { getResolverDb, closeResolverPool } from "./client-resolver";
 // `getAuthDb` is the same story as `getAppDb`: reachable only via
 // "@provence360/database/client-auth", used only by packages/auth.
 export { loadDotEnv } from "./load-env";
+export { checkDatabaseHealth } from "./health";
+export type { DatabaseHealthResult } from "./health";

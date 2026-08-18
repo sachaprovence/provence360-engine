@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:deployment": "node scripts/smoke-deployment.mjs"
   },
   "dependencies": {
     "@provence360/auth": "workspace:*",

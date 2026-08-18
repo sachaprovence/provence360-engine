@@ -13,7 +13,7 @@ let pool: ReturnType<typeof postgres> | undefined;
 function getPool() {
   if (!pool) {
     const env = loadDbEnv();
-    pool = postgres(env.DATABASE_URL_RESOLVER, { max: 5 });
+    pool = postgres(env.DATABASE_URL_RESOLVER, { max: 5, connect_timeout: 10, idle_timeout: 60 });
   }
   return pool;
 }

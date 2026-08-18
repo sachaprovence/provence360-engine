@@ -120,6 +120,9 @@ importers:
       '@provence360/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@provence360/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@provence360/publishing':
         specifier: workspace:*
         version: link:../../packages/publishing
@@ -193,6 +196,12 @@ importers:
       '@provence360/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@provence360/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
     devDependencies:
       '@provence360/config':
         specifier: workspace:*
@@ -203,9 +212,6 @@ importers:
       eslint:
         specifier: 9.39.5
         version: 9.39.5
-      tsx:
-        specifier: 4.23.12
-        version: 4.23.12
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -439,6 +445,9 @@ importers:
       s3rver:
         specifier: 3.7.1
         version: 3.7.1
+      tsx:
+        specifier: 4.23.12
+        version: 4.23.12
       typescript:
         specifier: 5.9.3
         version: 5.9.3
