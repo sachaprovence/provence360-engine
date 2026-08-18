@@ -11,6 +11,19 @@ async function makeJpeg(width: number, height: number): Promise<Buffer> {
     .toBuffer();
 }
 
+async function makeJpegWithOrientation(
+  rawWidth: number,
+  rawHeight: number,
+  orientation: number,
+): Promise<Buffer> {
+  return sharp({
+    create: { width: rawWidth, height: rawHeight, channels: 3, background: { r: 9, g: 8, b: 7 } },
+  })
+    .jpeg()
+    .withMetadata({ orientation })
+    .toBuffer();
+}
+
 describe("generateImageVariants", () => {
   it("generates every variant narrower than the source, none wider", async () => {
     const bytes = await makeJpeg(2000, 1500);
@@ -49,6 +62,28 @@ describe("generateImageVariants", () => {
     if (thumbnail) {
       const ratio = thumbnail.width / thumbnail.height;
       expect(ratio).toBeCloseTo(2, 1);
+    }
+  });
+
+  it("EXIF orientation: a 90°-rotated (Orientation 6) source produces variants that are actually portrait — matching the corrected width/height, not the raw pixel layout", async () => {
+    // Raw pixels 2000x1000 (landscape, 2:1) with Orientation 6 -> the
+    // *displayed*, correct shape is 1000 wide x 2000 tall (portrait, 1:2).
+    const bytes = await makeJpegWithOrientation(2000, 1000, 6);
+    const source = await validateImageBytes(bytes);
+    expect(source.width).toBe(1000);
+    expect(source.height).toBe(2000);
+
+    const variants = await generateImageVariants(bytes, source);
+    const thumbnail = variants.find((v) => v.token === "thumbnail");
+    expect(thumbnail).toBeDefined();
+    if (thumbnail) {
+      // Target width (320) applies to the corrected (portrait) axis —
+      // the variant itself must actually be portrait-shaped, not a
+      // landscape thumbnail mislabeled with portrait metadata.
+      expect(thumbnail.width).toBeLessThanOrEqual(320);
+      expect(thumbnail.height).toBeGreaterThan(thumbnail.width);
+      const ratio = thumbnail.width / thumbnail.height;
+      expect(ratio).toBeCloseTo(0.5, 1);
     }
   });
 });

@@ -28,7 +28,9 @@
     "@provence360/config": "workspace:*",
     "@provence360/testkit": "workspace:*",
     "@types/node": "22.20.1",
+    "@types/s3rver": "^3.7.4",
     "eslint": "9.39.5",
+    "s3rver": "3.7.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

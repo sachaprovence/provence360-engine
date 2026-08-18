@@ -1,5 +1,7 @@
 import { getMediaAsset } from "@provence360/content";
 import type { AppTx } from "@provence360/database";
+import { logger } from "@provence360/observability";
+import { requireCurrentTenantId } from "@provence360/tenant";
 import { resolveMediaVariants } from "../domain/media-variants";
 import {
   resolveDeliveryStorageKey,
@@ -13,6 +15,14 @@ export interface MediaDeliveryResult {
   contentType: string;
   /** True only for a genuinely content-addressed URL (asset has a real checksum) — the caller decides the Cache-Control value from this. */
   immutable: boolean;
+  /**
+   * A strong validator (brief §9) for this exact response — the asset's
+   * own fingerprint plus the requested variant, so a thumbnail and its
+   * original never collide on the same ETag despite sharing an asset id.
+   * Unquoted; callers wrap it in `"..."` themselves when setting the
+   * actual `ETag` header (see `buildMediaDeliveryResponse`).
+   */
+  etag: string;
 }
 
 /**
@@ -39,8 +49,10 @@ export async function resolveMediaDelivery(
   fingerprint: string,
   variant: DeliveryVariant,
 ): Promise<MediaDeliveryResult | null> {
+  const tenantId = requireCurrentTenantId();
+
   const asset = await getMediaAsset(tx, assetId);
-  if (!asset) return null;
+  if (!asset) return notFound(tenantId, assetId, variant, "asset_not_found");
 
   // The fingerprint identifies *this version* of the asset as a whole —
   // the same value gates every variant, including "original" — so a
@@ -49,7 +61,9 @@ export async function resolveMediaDelivery(
   // of the binary" — a replaced file is always a *new* MediaAsset with
   // its own id, so this checksum never actually changes in place) can
   // never be masked by a cached, differently-fingerprinted URL.
-  if (!asset.checksumSha256 || asset.checksumSha256 !== fingerprint) return null;
+  if (!asset.checksumSha256 || asset.checksumSha256 !== fingerprint) {
+    return notFound(tenantId, assetId, variant, "fingerprint_mismatch");
+  }
 
   const deliverable: DeliverableAsset = {
     id: asset.id,
@@ -60,7 +74,34 @@ export async function resolveMediaDelivery(
 
   const storageKey = resolveDeliveryStorageKey(deliverable, variant);
   const body = await storage.getObject(storageKey);
-  if (!body) return null;
+  if (!body) return notFound(tenantId, assetId, variant, "storage_object_missing");
 
-  return { body, contentType: asset.mimeType, immutable: Boolean(asset.checksumSha256) };
+  return {
+    body,
+    contentType: asset.mimeType,
+    immutable: Boolean(asset.checksumSha256),
+    etag: `${asset.checksumSha256}-${variant}`,
+  };
+}
+
+/**
+ * `media.delivery.not_found` (brief §13) — logged at `info`, not `warn`:
+ * this route is public and unauthenticated, so a 404 here is routine
+ * (stale bookmarks, forged/probing requests, a since-deleted asset) far
+ * more often than it's an actionable problem. `reason` still distinguishes
+ * the one case worth watching in aggregate — `storage_object_missing` is
+ * exactly the DB-orphan symptom `findDbOrphans` also detects proactively
+ * (see `reconciliation/orphan-scan.ts`); seeing it show up *live*, from a
+ * real visitor, is a genuinely useful signal a dashboard could alert on.
+ * Never logs the fingerprint itself (an opaque value, not sensitive, but
+ * unnecessary) or anything from the request beyond these ids.
+ */
+function notFound(
+  tenantId: string,
+  assetId: string,
+  variant: DeliveryVariant,
+  reason: "asset_not_found" | "fingerprint_mismatch" | "storage_object_missing",
+): null {
+  logger.info("media.delivery.not_found", { tenantId, assetId, variant, reason });
+  return null;
 }

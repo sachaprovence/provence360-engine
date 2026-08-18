@@ -492,3 +492,63 @@ quota/billing system — none of this changes and none of it was attempted.
   and `globalThis` patterns respectively, and both patterns are reusable
   precedent for any future two-phase-operation or process-singleton in this
   codebase.
+
+## v0.9.1 addendum — Media Reliability, Storage Hardening & Production Readiness
+
+v0.9 proved the kernel could ingest and serve real media. v0.9.1 hardens it
+against the failure modes a real deployment actually hits — no shape
+change to the decisions above, only additions and one correctness fix. See
+the v0.9.1 final report for the complete account; the durable architectural
+decisions worth recording here:
+
+- **Storage keys for the finalize-time original/variants are now
+  deterministic** (the upload intent's own id, not a fresh `randomUUID()`
+  per attempt) — since there is no distributed transaction between
+  Postgres and object storage, a finalize that writes storage objects and
+  then fails before the DB commits used to leak a fresh, unbounded set of
+  orphaned objects on every retry of a persistently-failing upload;
+  keying by the intent's own id makes every retry overwrite the same keys
+  instead.
+- **`finalizeMediaUploadSafely` is now idempotent for retry-after-success**
+  — a caller re-finalizing an already-`finalized` intent gets the existing
+  `MediaAsset` back, not an error, while a genuinely `failed`/`expired`
+  intent still errors (there is nothing to hand back).
+- **Every successful finalize now deletes its own temp upload object**
+  (previously only reclaimed by the periodic expiry sweep for a
+  never-finalized intent) — closing a real, unconditional storage leak
+  that existed on the _success_ path, not just the failure path.
+- **Orphan reconciliation is a new, explicit, non-destructive primitive**
+  (`packages/media/src/reconciliation/orphan-scan.ts`) — `findStorageOrphans`/
+  `findDbOrphans`, detection only, never auto-deleting. Required adding
+  `ObjectStorage.listObjects(prefix)` to the storage interface (implemented
+  in both `MemoryObjectStorage` and `S3ObjectStorage` via
+  `ListObjectsV2Command`) — the one new method added to that interface
+  since v0.9.
+- **A safe-deletion check exists** (`isMediaAssetSafeToDelete`,
+  `packages/publishing/src/media-lifecycle.ts`) extending the _existing_
+  `collectReferences`/media-manifest abstraction rather than a parallel
+  reference-counting system — it lives in `packages/publishing`, not
+  `packages/media`, because it needs to see Sites, Pages, branding, and
+  historical Revisions, all of which `packages/publishing` already depends
+  on and `packages/media` deliberately does not (Decision 0 is unchanged).
+- **Real S3-compatible integration testing**: MinIO (Docker) was the
+  stated preference and was tried first — `dockerd` runs in this
+  environment, but pulling any image is blocked by the environment's own
+  egress policy. `s3rver` (a real, maintained S3-REST-API Node.js server,
+  installed from the npm registry, no Docker required) is the documented
+  substitute, exercising the actual production `S3ObjectStorage` class
+  over real HTTP. See the v0.9.1 report's LIMITATIONS section for exactly
+  what this does and doesn't prove versus a real MinIO/AWS S3/R2 endpoint.
+- **`Range`/`206 Partial Content` was evaluated and deliberately not
+  implemented** — every asset served is a fully-processed, closed-format
+  image capped at 15 MiB; no video/audio in scope, no resumable-download
+  use case. Revisit only if that scope genuinely changes.
+- **`MEDIA_STORAGE_PROVIDER=memory` + `NODE_ENV=production` now fails
+  loudly at first use** rather than silently shipping a non-persistent,
+  non-shared storage backend to production.
+- **Correctness fix, not a new feature: EXIF orientation.** `validateImageBytes`
+  previously reported raw (un-rotated) pixel dimensions, and
+  `generateImageVariants` resized without auto-orienting — together, any
+  EXIF-rotated photo (the common case for phone-camera uploads) produced a
+  MediaAsset with backwards `width`/`height` and sideways-rendering
+  variants. Both are fixed; see `docs/MEDIA.md`, "EXIF orientation."

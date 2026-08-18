@@ -57,3 +57,22 @@ export class MediaDecodeError extends Error {
     this.name = "MediaDecodeError";
   }
 }
+
+/**
+ * The storage backend itself failed — a network error, a timeout, a
+ * permissions/credentials problem, a bucket that doesn't exist. Never
+ * exposes the underlying SDK/network error's own message to a caller
+ * (brief §14: "les réponses client ne doivent jamais fuiter d'erreurs
+ * techniques brutes") — that detail is only ever logged, structured,
+ * server-side (`media.storage.put_failed`/`media.storage.get_failed` —
+ * see `upload/finalize.ts`), never returned. Distinct from
+ * {@link MediaObjectMissingError}: that one means "the backend answered
+ * cleanly and the object genuinely isn't there"; this one means "the
+ * backend itself could not be reached or refused the request."
+ */
+export class MediaStorageUnavailableError extends Error {
+  constructor() {
+    super("Storage is temporarily unavailable. Please try again.");
+    this.name = "MediaStorageUnavailableError";
+  }
+}

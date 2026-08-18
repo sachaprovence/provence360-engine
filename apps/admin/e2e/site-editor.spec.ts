@@ -60,20 +60,26 @@ test.describe("Site Editor — pages and blocks", () => {
 
     await page.goto(`/admin/tenants/${tenantId}/sites/${siteId}/pages/${pageId}`);
 
-    // The block list already has one seeded "text@1" block.
-    const textBlocksBefore = page.locator("li", { hasText: "text@1" });
-    await expect(textBlocksBefore).toHaveCount(1);
+    // At least one seeded "text@1" block is already present. Asserted as a
+    // relative delta, not a hardcoded starting count: this runs against the
+    // shared seeded "villas-cassis" home page (not a fresh fixture like
+    // publishing.spec.ts's own tests), so a starting count baked in at
+    // write time would silently assume nothing else in this run — or an
+    // earlier, non-reseeded run reusing the same dev database — ever added
+    // a block here first.
+    const textBlocks = page.locator("li", { hasText: "text@1" });
+    const countBefore = await textBlocks.count();
+    expect(countBefore).toBeGreaterThanOrEqual(1);
 
-    // Add a second "text" block.
+    // Add another "text" block.
     await page.getByTestId("add-block-type").selectOption("text");
     await page
       .getByTestId("add-block-props")
       .fill(JSON.stringify({ body: { fr: "Bloc ajouté par le test E2E." } }));
     await page.getByRole("button", { name: /add block/i }).click();
 
-    // The block list must have grown — two "text@1" instances now.
-    const textBlocksAfter = page.locator("li", { hasText: "text@1" });
-    await expect(textBlocksAfter).toHaveCount(2, { timeout: 10000 });
+    // The block list must have grown by exactly one.
+    await expect(textBlocks).toHaveCount(countBefore + 1, { timeout: 10000 });
   });
 
   test("OWNER cannot reach another tenant's Site or Page — 404, not data", async ({ page }) => {

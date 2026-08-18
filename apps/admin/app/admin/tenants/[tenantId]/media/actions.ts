@@ -19,6 +19,7 @@ const FRIENDLY_ERROR_NAMES = new Set([
   "MediaTooLargeError",
   "MediaDecodeError",
   "MediaObjectMissingError",
+  "MediaStorageUnavailableError",
 ]);
 
 /**

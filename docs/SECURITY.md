@@ -369,7 +369,26 @@ the security-relevant guarantees:
 - **Deletion stays conservative.** The pre-existing hard-delete function is
   not exposed anywhere in the new Admin UI — see ADR 0022, Decision 14, for
   why the new delivery route's live lookup makes it newly risky to expose
-  without reference-counting first.
+  without reference-counting first. v0.9.1 adds the reference check itself
+  (`isMediaAssetSafeToDelete`) but still no UI/action to call it from.
+
+### v0.9.1 hardening additions
+
+- **Decompression-bomb guard proven with a real bomb-shaped payload, not
+  just trusted from reading the code.** `validation/image-validation.test.ts`
+  constructs a genuine tiny-file/enormous-pixel-count image (a flat color
+  at 7000×6000, well over `MAX_INPUT_PIXELS`) and confirms `sharp`'s
+  `limitInputPixels` guard actually refuses to decode it.
+- **Raw storage-backend errors never reach a client.** A real AWS SDK/
+  network exception from `putObject`/`getObject` is logged in full,
+  server-side, structured (`media.storage.put_failed`/`get_failed`) and
+  replaced with the closed, generic `MediaStorageUnavailableError` before
+  it can propagate to a caller — see `packages/media/src/upload/finalize.ts`.
+- **`S3ObjectStorage` is now exercised against a real S3-compatible HTTP
+  server** (`s3rver`, in-process, no Docker required — MinIO was tried
+  first but is blocked by this environment's own egress policy), closing a
+  gap v0.9 disclosed but left open: the actual production storage adapter
+  had zero test coverage against real S3 wire behavior.
 
 ## Known gaps (tracked, not hidden)
 

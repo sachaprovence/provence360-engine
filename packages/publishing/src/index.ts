@@ -30,6 +30,9 @@ export {
 } from "./media-manifest";
 export type { CollectedReferences } from "./media-manifest";
 
+export { isMediaAssetSafeToDelete } from "./media-lifecycle";
+export type { MediaReferenceLocation, MediaSafetyReport } from "./media-lifecycle";
+
 export { snapshotsEqual } from "./snapshot-equal";
 
 export { createRevisionFromDraft } from "./create-revision";

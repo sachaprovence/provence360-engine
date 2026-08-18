@@ -66,14 +66,34 @@ export async function validateImageBytes(
     throw new MediaDecodeError();
   }
 
+  // `sharp`'s own `metadata()` always reports raw pixel dimensions —
+  // `orientation` (the EXIF tag) is reported *separately*, never folded
+  // in. A phone photo shot in portrait very commonly has landscape raw
+  // pixel dimensions plus an orientation tag telling a viewer to rotate
+  // 90°; every browser's own `<img>` rendering (and `generateImageVariants`
+  // below, via `.rotate()`) already honors that tag, so a MediaAsset's
+  // *reported* `width`/`height` must match what actually gets displayed —
+  // not the raw buffer's layout — or the renderer's aspect-ratio box (and
+  // any width/height-driven `srcset` sizing) would be silently backwards
+  // for exactly the uploads this matters most for. Orientation values
+  // 5-8 (EXIF spec) are the 90°/270° rotations that swap the two axes;
+  // 1-4 only mirror/flip in place and never change which axis is which.
+  const [width, height] = isRotated90Or270(metadata.orientation)
+    ? [metadata.height, metadata.width]
+    : [metadata.width, metadata.height];
+
   return {
     format,
     mimeType: FORMAT_TO_MIME_TYPE[format],
-    width: metadata.width,
-    height: metadata.height,
+    width,
+    height,
     byteSize: bytes.byteLength,
     checksumSha256: createHash("sha256").update(bytes).digest("hex"),
   };
+}
+
+function isRotated90Or270(orientation: number | undefined): boolean {
+  return orientation === 5 || orientation === 6 || orientation === 7 || orientation === 8;
 }
 
 function isAcceptedFormat(format: string): format is AcceptedImageFormat {

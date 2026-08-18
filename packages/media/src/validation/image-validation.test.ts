@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
+import { MAX_INPUT_PIXELS } from "../domain/constants";
 import { MediaDecodeError, MediaTooLargeError, MediaTypeRejectedError } from "../errors";
 import { validateImageBytes } from "./image-validation";
 
@@ -30,6 +31,28 @@ async function makeWebp(width = 50, height = 40): Promise<Buffer> {
 const SVG_PAYLOAD = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script></svg>',
 );
+
+/**
+ * A real phone-camera-shaped file: raw pixel layout is landscape
+ * (`rawWidth`x`rawHeight`), but an EXIF `Orientation` tag of 6 (the
+ * single most common real-world value — a phone held upright shooting a
+ * portrait photo, sensor mounted landscape) says "rotate 90° clockwise to
+ * display correctly," meaning the photo is *actually* portrait
+ * (`rawHeight` wide, `rawWidth` tall) once any correctly-behaving viewer
+ * (every browser's own `<img>` included) renders it.
+ */
+async function makeJpegWithOrientation(
+  rawWidth: number,
+  rawHeight: number,
+  orientation: number,
+): Promise<Buffer> {
+  return sharp({
+    create: { width: rawWidth, height: rawHeight, channels: 3, background: { r: 9, g: 8, b: 7 } },
+  })
+    .jpeg()
+    .withMetadata({ orientation })
+    .toBuffer();
+}
 
 describe("validateImageBytes", () => {
   it("accepts a real JPEG and reports real dimensions/mimeType/format", async () => {
@@ -105,5 +128,53 @@ describe("validateImageBytes", () => {
       .gif()
       .toBuffer();
     await expect(validateImageBytes(gifBytes)).rejects.toThrow(MediaTypeRejectedError);
+  });
+
+  it("reports EXIF-orientation-corrected width/height — a 90°-rotated (Orientation 6) landscape-pixel photo is reported as portrait, matching what every browser actually displays", async () => {
+    const bytes = await makeJpegWithOrientation(100, 60, 6);
+    const result = await validateImageBytes(bytes);
+    // Raw pixels are 100x60 (landscape); Orientation 6 means "rotate 90°
+    // CW to display" — the *displayed*, correct shape is 60 wide x 100
+    // tall (portrait). A width/height report that still says 100x60
+    // would be describing the wrong axis for every aspect-ratio box the
+    // renderer builds from it.
+    expect(result.width).toBe(60);
+    expect(result.height).toBe(100);
+  });
+
+  it("does NOT swap width/height for a non-90°-rotation orientation (e.g. Orientation 3, a 180° flip — same axes)", async () => {
+    const bytes = await makeJpegWithOrientation(100, 60, 3);
+    const result = await validateImageBytes(bytes);
+    expect(result.width).toBe(100);
+    expect(result.height).toBe(60);
+  });
+
+  it("rejects a real decompression-bomb-shaped file — a tiny byte count decoding to a pixel count over MAX_INPUT_PIXELS (brief §15/§8)", async () => {
+    // A genuine decompression bomb: a single flat color compresses to a
+    // tiny PNG regardless of pixel dimensions, which is exactly the shape
+    // this guard exists for (a small download, an enormous decoded
+    // buffer). 7000x6000 = 42,000,000 px, comfortably over the
+    // 40,000,000px limit, while still encoding to only a few hundred
+    // bytes — proving `limitInputPixels` (sharp's own, well-tested guard,
+    // wired through `validateImageBytes`) actually refuses to decode this
+    // rather than allocating the full raster buffer first.
+    const width = 7000;
+    const height = 6000;
+    expect(width * height).toBeGreaterThan(MAX_INPUT_PIXELS);
+    const bombBytes = await sharp({
+      create: { width, height, channels: 3, background: { r: 128, g: 128, b: 128 } },
+    })
+      .png()
+      .toBuffer();
+    // Confirms the test payload itself is genuinely bomb-shaped: decoded
+    // pixel data would be >100x the actual file size on disk — not just
+    // an oversized, honestly-large file that MediaTooLargeError would
+    // already catch for a different reason.
+    const decodedRasterBytes = width * height * 3;
+    expect(decodedRasterBytes / bombBytes.byteLength).toBeGreaterThan(100);
+
+    await expect(
+      validateImageBytes(bombBytes, { maxBytes: bombBytes.byteLength + 1 }),
+    ).rejects.toThrow(MediaDecodeError);
   });
 });

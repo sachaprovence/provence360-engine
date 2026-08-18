@@ -3,11 +3,14 @@ import type { ObjectMetadata, ObjectStorage } from "./object-storage";
 /**
  * A deterministic, in-process `ObjectStorage` — the storage double every
  * unit/integration/E2E test in this repo uses (see ADR 0022, "storage
- * abstraction": this sandboxed CI environment has no Docker/MinIO
- * available, so a real S3-compatible integration test is out of reach
- * here — a disclosed, deliberate limitation, not an oversight). Each
- * instance owns its own isolated `Map`; tests construct a fresh one per
- * test rather than sharing global state.
+ * abstraction"). `S3ObjectStorage` itself is additionally covered by a
+ * real S3-compatible integration suite (`s3-object-storage.integration.test.ts`,
+ * v0.9.1) — this fake is for every *other* test, where a real network
+ * round-trip would be pure overhead, never a substitute for that coverage.
+ * Each instance owns its own isolated `Map`; tests construct a fresh one
+ * per test rather than sharing global state. **Dev/test only — never
+ * production** (see `getObjectStorage`'s own doc comment and
+ * docs/MEDIA.md, "Storage").
  */
 export class MemoryObjectStorage implements ObjectStorage {
   private readonly objects = new Map<string, { body: Buffer; contentType: string }>();
@@ -28,5 +31,9 @@ export class MemoryObjectStorage implements ObjectStorage {
 
   async deleteObject(key: string): Promise<void> {
     this.objects.delete(key);
+  }
+
+  async listObjects(prefix: string): Promise<string[]> {
+    return [...this.objects.keys()].filter((key) => key.startsWith(prefix));
   }
 }
