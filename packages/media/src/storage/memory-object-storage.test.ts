@@ -45,4 +45,25 @@ describe("MemoryObjectStorage", () => {
     await storage.putObject("k", Buffer.from("second"), { contentType: "text/plain" });
     expect((await storage.getObject("k"))?.toString()).toBe("second");
   });
+
+  it("listObjects returns only keys under the given prefix, and nothing else", async () => {
+    const storage = new MemoryObjectStorage();
+    await storage.putObject("tenants/a/media/1/original", Buffer.from("x"), {
+      contentType: "text/plain",
+    });
+    await storage.putObject("tenants/a/media/2/original", Buffer.from("x"), {
+      contentType: "text/plain",
+    });
+    await storage.putObject("tenants/b/media/1/original", Buffer.from("x"), {
+      contentType: "text/plain",
+    });
+
+    const keys = await storage.listObjects("tenants/a/media/");
+    expect(keys.sort()).toEqual(["tenants/a/media/1/original", "tenants/a/media/2/original"]);
+  });
+
+  it("listObjects on a prefix with nothing under it returns an empty array", async () => {
+    const storage = new MemoryObjectStorage();
+    expect(await storage.listObjects("tenants/nothing-here/")).toEqual([]);
+  });
 });

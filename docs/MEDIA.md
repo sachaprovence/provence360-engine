@@ -78,12 +78,22 @@ S3_FORCE_PATH_STYLE=true   # MinIO and most non-AWS endpoints need this
 `loadMediaEnv()` (`packages/validation/src/env.ts`) validates this at
 startup — missing any required `S3_*` field with `MEDIA_STORAGE_PROVIDER=s3`
 throws immediately rather than silently falling back to `memory`.
+
+**`MEDIA_STORAGE_PROVIDER=memory` + `NODE_ENV=production` is refused at
+first use** (v0.9.1, `packages/media/src/storage/config.ts`) — a loud,
+immediate `Error` rather than a silent, data-losing deployment. `memory` is
+correct for local dev and every automated test, never for a real
+deployment: bytes vanish on restart and are never shared across the
+multiple processes/instances any real deployment eventually runs
+(serverless, containers, a rolling deploy).
+
 `S3ObjectStorage` (`packages/media/src/storage/s3-object-storage.ts`) is
-not integration-tested against a live bucket in this repository's own test
-suite (this sandboxed development environment has no Docker/MinIO
-available) — it is exercised by TypeScript's structural typing against the
-shared `ObjectStorage` interface and should be smoke-tested manually
-against your real bucket before relying on it in production.
+exercised by a real integration suite
+(`packages/media/src/storage/s3-object-storage.integration.test.ts`, v0.9.1)
+— see "Real S3-compatible integration testing" below. It should still be
+smoke-tested manually against your actual production bucket/provider before
+first relying on it, since the suite runs against `s3rver`, not that exact
+bucket/provider.
 
 ## Limits (centralized, tested, all in `packages/media/src/domain/constants.ts`)
 
@@ -95,6 +105,77 @@ against your real bucket before relying on it in production.
 | `ACCEPTED_IMAGE_FORMATS`                     | jpeg, png, webp                                      | Closed allowlist, checked after decode. SVG always rejected; AVIF excluded (this build's sharp has no AVIF codec). |
 | `IMAGE_VARIANT_TOKENS` / `VARIANT_MAX_WIDTH` | thumbnail 320 / small 640 / medium 1280 / large 1920 | Closed registry, never upscaled.                                                                                   |
 
+## Real S3-compatible integration testing (v0.9.1)
+
+`S3ObjectStorage` is tested against a real S3-REST-API HTTP server, not a
+mock of the AWS SDK — `packages/media/src/storage/s3-object-storage.integration.test.ts`
+spins up [`s3rver`](https://github.com/jamhall/s3rver) in-process (a real,
+maintained Node.js server implementing the S3 REST API) and runs as part of
+this package's normal `vitest run`, no separate CI stage or opt-in flag
+needed.
+
+MinIO (Docker) was the originally preferred backend and was tried first;
+pulling any Docker image is blocked by this environment's own egress
+policy, so `s3rver` is the documented substitute. It proves the same thing
+MinIO would for this purpose — `S3ObjectStorage`'s real HTTP wire behavior
+against a real S3-compatible server (put/get/head/delete/list, MIME,
+byte-for-byte round-trips, overwrite semantics, missing-object handling,
+tenant-path isolation) — but is not a substitute for smoke-testing against
+your actual AWS S3/R2/MinIO endpoint before a first production deploy; see
+the v0.9.1 report's LIMITATIONS section for the exact boundary.
+
+## Consistency model — no distributed transaction
+
+Postgres and object storage are two separate systems with no distributed
+transaction between them. `finalizeMediaUpload` writes storage objects
+_and_ creates the `MediaAsset` row inside the same flow, but only the
+database side is transactional; a failure between "storage write
+succeeded" and "the DB transaction committed" cannot be rolled back on the
+storage side. v0.9.1 makes the resulting compensation explicit rather than
+pretending atomicity:
+
+- **Storage keys are deterministic**, derived from the upload intent's own
+  id (not a fresh random id per attempt). A finalize that fails after
+  writing storage objects but before the DB commits leaves the intent
+  `pending`; a retry recomputes and overwrites the _exact same_ keys —
+  self-healing, never accumulating a fresh orphaned set per failed attempt.
+- **Retry-after-success is idempotent.** If a client's connection drops
+  after `finalizeMediaUpload` committed but before the response arrived,
+  calling `finalizeMediaUploadSafely` again with the same upload id returns
+  the _same_ `MediaAsset` instead of erroring.
+- **Concurrent finalize is serialized** by a `SELECT ... FOR UPDATE` row
+  lock on the upload intent — two simultaneous finalize calls on the same
+  intent always produce exactly one `MediaAsset`; the second sees
+  `MediaUploadAlreadyFinalizedError`.
+- **Every successful finalize deletes its own temp upload object** once the
+  `MediaAsset` exists (the staging copy is redundant at that point) —
+  previously only an _expired, never-finalized_ intent's temp object was
+  ever reclaimed; a synchronously-failed finalize now cleans up its own
+  temp object too.
+
+See `packages/media/src/upload/finalize.ts`'s own doc comments for the
+exact reasoning, and `finalize.test.ts` for the concurrency/idempotence
+proofs (real overlapping Postgres transactions, not simulated).
+
+## Orphan reconciliation (v0.9.1)
+
+Two distinct, non-destructive detection primitives —
+`packages/media/src/reconciliation/orphan-scan.ts`, not wired to a
+scheduler, purely callable:
+
+- **`findStorageOrphans(tx, storage)`** — every object under a tenant's
+  storage prefix that no `MediaAsset` row or `media_uploads` row (any
+  status) explains.
+- **`findDbOrphans(tx, storage)`** — every `MediaAsset` (or declared
+  variant) whose storage object no longer exists (an out-of-band deletion,
+  a provider-side incident).
+
+Neither function deletes anything — detection only, per the brief's own
+"prefer false negatives over false positives" rule. `findStorageOrphans`
+never flags a live `MediaAsset`'s own bytes as orphaned regardless of
+whether that asset is referenced by the current draft — every existing
+row's storage keys count as accounted-for.
+
 ## Cleanup of abandoned uploads
 
 `cleanupExpiredMediaUploads(tx, storage)` (`packages/media/src/cleanup.ts`)
@@ -102,19 +183,97 @@ is a plain, idempotent, callable function — not a built-in scheduler. To
 actually run it in a deployment, invoke it periodically from whatever
 mechanism your platform already uses for scheduled jobs (a cron entry, a
 queue worker, a serverless scheduled function), scoped per tenant via
-`withTenantContext`. No v0.9 code path calls it automatically.
+`withTenantContext`. No code path calls it automatically.
 
 ## Deletion
 
 There is currently **no delete action anywhere in the Admin Media Library
 UI**, deliberately. `deleteMediaAsset` (`packages/content`) still exists as
-a hard row delete (pre-existing since v0.3) but is not wired into any v0.9
-surface — see ADR 0022, Decision 14, for why the new delivery route's live
-lookup makes exposing it unsafe without reference-counting across every
-Draft and historical Revision first. That's a real gap, tracked here
-rather than hidden: if you need to remove a MediaAsset today, you would
-have to call `deleteMediaAsset` directly and manually confirm nothing
-still references it.
+a hard row delete (pre-existing since v0.3) but is not wired into any
+surface — see ADR 0022, Decision 14. v0.9.1 adds the safety check a future
+delete action would need before ever calling it —
+`isMediaAssetSafeToDelete(tx, mediaAssetId)`
+(`packages/publishing/src/media-lifecycle.ts`) reports whether a
+MediaAsset is referenced by any Site's current draft pages, its branding,
+or _any_ historical `site_revisions` snapshot (published-and-current or
+not — a rollback can make any past Revision live again) — but still
+exposes no UI or Server Action to act on it. If you need to remove a
+MediaAsset today, consult `isMediaAssetSafeToDelete` first, then call
+`deleteMediaAsset` directly.
+
+## Delivery hardening (v0.9.1)
+
+Both delivery routes (`apps/web` and `apps/admin`, via the shared
+`buildMediaDeliveryResponse` in `packages/media/src/delivery/media-response.ts`)
+now set:
+
+- **`ETag`** — a strong validator (`"{checksum}-{variant}"`), so a
+  thumbnail and its original never collide despite sharing an asset id.
+- **`Content-Length`** — the real, already-known body size.
+- **`HEAD`** support — identical headers, no body.
+- **`If-None-Match` → `304 Not Modified`** — skips re-sending bytes the
+  client's cache already has current.
+
+**`Range`/`206 Partial Content` is deliberately not implemented** — a
+genuine evaluation, not a skipped checkbox: every asset served here is a
+fully-processed, closed-format image capped at 15 MiB; there is no
+video/audio in scope to seek within, no resumable-download use case, and a
+browser's own `<img>` loading never issues a Range request for a
+same-origin image on its own. If this product ever grows a genuinely
+large-file or seekable-media use case, it belongs in that one shared
+response builder, not implemented speculatively ahead of the need.
+
+## Observability events
+
+Structured, minimal `logger.info`/`logger.warn` events (existing logging
+infra, no new platform) — grep-able by name in production logs:
+
+| Event                                                                                  | When                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `media.upload.intent_created`                                                          | A two-phase upload begins.                                                                                                                                                                     |
+| `media.upload.finalized`                                                               | A MediaAsset was successfully created.                                                                                                                                                         |
+| `media.upload.finalize_failed`                                                         | Any finalize attempt failed for real (see the error taxonomy below).                                                                                                                           |
+| `media.upload.finalize_retry_after_success`                                            | A retry-after-success was recognized and the existing MediaAsset returned.                                                                                                                     |
+| `media.storage.get_failed` / `media.storage.put_failed`                                | The storage backend itself failed (network, timeout, permissions) — distinct from "object missing."                                                                                            |
+| `media.delivery.not_found`                                                             | The delivery route 404s, with a `reason` (`asset_not_found` / `fingerprint_mismatch` / `storage_object_missing`) — logged at `info`, since this is a public route where most 404s are routine. |
+| `media.cleanup.completed`                                                              | `cleanupExpiredMediaUploads` reclaimed at least one abandoned intent.                                                                                                                          |
+| `media.reconciliation.storage_orphans_found` / `media.reconciliation.db_orphans_found` | An orphan scan found something to report.                                                                                                                                                      |
+
+None of these ever include file bytes or credentials.
+
+## Error taxonomy
+
+Client-facing errors are a closed set (`packages/media/src/errors.ts`) —
+`MediaTypeRejectedError`, `MediaTooLargeError`, `MediaDecodeError`,
+`MediaObjectMissingError`, `MediaUploadExpiredError`,
+`MediaUploadAlreadyFinalizedError`, `MediaUploadNotFoundError`, and (v0.9.1)
+`MediaStorageUnavailableError`. A raw storage-backend exception (an AWS SDK
+error, a network timeout) is **never** returned to a caller — it's logged
+in full server-side (`media.storage.*_failed`) and replaced with the
+generic `MediaStorageUnavailableError`. `apps/admin`'s upload Server Action
+maps exactly this closed set to a friendly form error; anything else
+propagates as an unhandled error (a genuine bug, not a taxonomy gap).
+
+## EXIF orientation (v0.9.1 correctness fix)
+
+`sharp`'s own `metadata()` always reports raw pixel dimensions — a phone
+photo shot in portrait very commonly has landscape raw pixels plus an EXIF
+`Orientation` tag telling a viewer to rotate 90°. Two related bugs this
+version fixes:
+
+1. **`validateImageBytes`** now reports EXIF-orientation-corrected
+   `width`/`height` (swapped for `Orientation` 5-8) — matching what every
+   browser actually displays, so the renderer's aspect-ratio box is never
+   backwards for a rotated photo.
+2. **`generateImageVariants`** now calls `.rotate()` (sharp's auto-orient)
+   before resizing — without it, a variant's _pixels_ stayed in the raw,
+   un-rotated layout while the re-encoded output also lost the orientation
+   tag that would have let a viewer correct it, producing thumbnails that
+   render sideways.
+
+See `validation/image-validation.test.ts` and `processing/variants.test.ts`
+for the regression tests (constructing a real EXIF-tagged JPEG via sharp,
+not a canned fixture).
 
 ## Troubleshooting
 

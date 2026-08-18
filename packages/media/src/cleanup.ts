@@ -34,7 +34,7 @@ export async function cleanupExpiredMediaUploads(
   }
   const expiredCount = await expireOverdueMediaUploads(tx);
   if (expiredCount > 0) {
-    logger.info("media.upload.cleanup", { tenantId, expiredCount });
+    logger.info("media.cleanup.completed", { tenantId, expiredCount });
   }
   return { expiredCount };
 }

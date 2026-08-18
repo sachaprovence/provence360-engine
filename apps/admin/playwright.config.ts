@@ -48,6 +48,13 @@ export default defineConfig({
       DATABASE_URL_AUTH: process.env.DATABASE_URL_AUTH ?? "",
       ROOT_DOMAIN: process.env.ROOT_DOMAIN ?? "provence360.app",
       NODE_ENV: "production",
+      // v0.9.1: `NODE_ENV=production` + the default (memory) media
+      // storage now fails loudly at first use (a real deployment must
+      // never run on non-persistent, non-shared storage) — this E2E
+      // server is `next start` for realism (see the comment above), not
+      // an actual deployment, so it deliberately opts back in. Never set
+      // this in a real environment's own configuration.
+      MEDIA_ALLOW_MEMORY_IN_PRODUCTION: "true",
     },
   },
   use: {

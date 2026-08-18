@@ -50,7 +50,47 @@ export function resetObjectStorageForTests(): void {
 
 function createObjectStorageFromEnv(): ObjectStorage {
   const env = loadMediaEnv();
-  if (env.MEDIA_STORAGE_PROVIDER === "memory") return new MemoryObjectStorage();
+  if (env.MEDIA_STORAGE_PROVIDER === "memory") {
+    // v0.9.1 — brief §11: `MemoryObjectStorage` is an in-process `Map`.
+    // Even with the `globalThis` memoization above making it survive
+    // *this* process's own Server Action/Route Handler chunking, it is
+    // never shared across the multiple processes/instances any real
+    // deployment eventually runs (serverless, multiple containers, a
+    // rolling deploy) — an upload finalized on one instance is invisible
+    // to a delivery request served by another. That failure mode is
+    // silent and data-dependent (works fine locally with one dev-server
+    // process, breaks unpredictably in production) rather than a clean
+    // error, which is exactly the kind of bug this check exists to turn
+    // into a loud, immediate one: refuse to even start serving requests
+    // with this combination, rather than let it corrupt someone's launch
+    // day. `NODE_ENV=production` + `MEDIA_STORAGE_PROVIDER=memory` (or
+    // simply unset, since "memory" is the default) is never a supported
+    // combination — production must set `MEDIA_STORAGE_PROVIDER=s3` with
+    // real S3-compatible credentials (see docs/MEDIA.md, "Storage").
+    //
+    // `MEDIA_ALLOW_MEMORY_IN_PRODUCTION=true` is the one deliberate
+    // escape hatch — never for a real deployment, only for the Admin/Web
+    // E2E suites, which intentionally run `next build && next start`
+    // (`NODE_ENV=production` is Next.js's own behavior for that command,
+    // not this repo's choice — see each app's `playwright.config.ts` doc
+    // comment for why a production-mode server is used for E2E at all) but
+    // are not a real deployment. Explicit and auditable, not baked
+    // silently into this check: only the E2E webServer configs set it.
+    if (
+      process.env.NODE_ENV === "production" &&
+      process.env.MEDIA_ALLOW_MEMORY_IN_PRODUCTION !== "true"
+    ) {
+      throw new Error(
+        "MEDIA_STORAGE_PROVIDER=memory (the default) is not valid with NODE_ENV=production. " +
+          "MemoryObjectStorage is an in-process, non-persistent fake — correct for local " +
+          "development and automated tests, never for a real deployment (uploaded bytes vanish " +
+          "on restart and are never shared across multiple processes/instances). Set " +
+          'MEDIA_STORAGE_PROVIDER="s3" with real S3-compatible credentials — see .env.example ' +
+          "and docs/MEDIA.md.",
+      );
+    }
+    return new MemoryObjectStorage();
+  }
   return new S3ObjectStorage({
     bucket: env.S3_BUCKET as string,
     region: env.S3_REGION as string,

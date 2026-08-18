@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -25,14 +26,17 @@ export interface S3ObjectStorageConfig {
  * through `endpoint`/`forcePathStyle` — no provider-specific branch inside
  * this class.
  *
- * Not exercised against a live bucket by this repo's test suite: this
- * sandboxed environment has no Docker/MinIO available to stand up a real
- * S3-compatible endpoint (see ADR 0022, "storage abstraction," and
- * `MemoryObjectStorage`'s own doc comment). It is exercised by TypeScript
- * (the `ObjectStorage` contract) and is a small, direct, SDK-call-per-
- * method wrapper with no independent logic of its own to unit-test
- * meaningfully without a real or mocked HTTP layer — a disclosed,
- * deliberate limitation, not an oversight.
+ * Exercised against a real S3-compatible HTTP server (v0.9.1) — see
+ * `s3-object-storage.integration.test.ts`, run as part of this package's
+ * normal `vitest run` (no separate CI stage, no opt-in flag: it spins up
+ * its own in-process `s3rver` and tears it down, so it's exactly as
+ * deterministic and self-contained as any other test here). MinIO
+ * (Docker) was tried first per ADR 0022/the v0.9.1 brief's preference, but
+ * pulling any image is blocked by this environment's own egress policy;
+ * `s3rver` (a real, maintained S3-REST-API server, not a mock of this
+ * class or the AWS SDK) is the documented substitute — see that test
+ * file's own doc comment and the v0.9.1 report's LIMITATIONS section for
+ * exactly what this does and doesn't prove versus real MinIO/AWS S3/R2.
  */
 export class S3ObjectStorage implements ObjectStorage {
   private readonly client: S3Client;
@@ -92,6 +96,25 @@ export class S3ObjectStorage implements ObjectStorage {
 
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  async listObjects(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const result = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const object of result.Contents ?? []) {
+        if (object.Key) keys.push(object.Key);
+      }
+      continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys;
   }
 }
 

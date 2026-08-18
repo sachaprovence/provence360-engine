@@ -119,6 +119,8 @@ test.describe("Media Library — upload, picker, publish", () => {
         contentType: res.headers.get("content-type"),
         nosniff: res.headers.get("x-content-type-options"),
         cacheControl: res.headers.get("cache-control"),
+        contentLength: res.headers.get("content-length"),
+        etag: res.headers.get("etag"),
         byteLength: buf.byteLength,
       };
     }, deliveryUrl);
@@ -127,6 +129,34 @@ test.describe("Media Library — upload, picker, publish", () => {
     expect(result.nosniff).toBe("nosniff");
     expect(result.cacheControl).toBe("private, no-store");
     expect(result.byteLength).toBeGreaterThan(0);
+    // v0.9.1 — real conditional-request support (brief §9), proven over a
+    // genuine same-process fetch rather than only at the unit level.
+    expect(result.contentLength).toBe(String(result.byteLength));
+    expect(result.etag).toMatch(/^"[0-9a-f]{64}-[a-z]+"$/);
+
+    const conditional = await page.evaluate(
+      async ({ url, etag }) => {
+        const res = await fetch(url, { headers: { "If-None-Match": etag ?? "" } });
+        const buf = await res.arrayBuffer();
+        return { status: res.status, byteLength: buf.byteLength };
+      },
+      { url: deliveryUrl, etag: result.etag },
+    );
+    expect(conditional.status).toBe(304);
+    expect(conditional.byteLength).toBe(0);
+
+    const head = await page.evaluate(async (url) => {
+      const res = await fetch(url, { method: "HEAD" });
+      const buf = await res.arrayBuffer();
+      return {
+        status: res.status,
+        contentLength: res.headers.get("content-length"),
+        byteLength: buf.byteLength,
+      };
+    }, deliveryUrl);
+    expect(head.status).toBe(200);
+    expect(head.contentLength).toBe(String(result.byteLength));
+    expect(head.byteLength).toBe(0);
   });
 
   test("uploading a non-image file is rejected with a visible error, and creates no MediaAsset", async ({

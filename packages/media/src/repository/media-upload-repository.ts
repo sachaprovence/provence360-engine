@@ -1,6 +1,7 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { AppTx } from "@provence360/database";
 import { mediaUploads } from "@provence360/database";
+import { logger } from "@provence360/observability";
 import { requireCurrentTenantId } from "@provence360/tenant";
 import { UPLOAD_INTENT_TTL_MS } from "../domain/constants";
 import {
@@ -38,6 +39,11 @@ export async function createMediaUploadIntent(
     })
     .returning();
   if (!row) throw new Error("Failed to create media upload intent");
+  logger.info("media.upload.intent_created", {
+    tenantId,
+    uploadId: row.id,
+    maxBytes: row.maxBytes,
+  });
   return row;
 }
 
@@ -94,6 +100,24 @@ export async function markMediaUploadFailed(tx: AppTx, id: string): Promise<void
     .update(mediaUploads)
     .set({ status: "failed" })
     .where(and(eq(mediaUploads.id, id), eq(mediaUploads.tenantId, tenantId)));
+}
+
+/**
+ * Every `media_uploads.storage_key` for the current tenant, regardless of
+ * status — the "accounted for" half of storage-orphan reconciliation
+ * (`findStorageOrphans`): a temp upload object is never a mystery as long
+ * as its owning row still exists, whatever that row's status is (even a
+ * `finalized`/`failed` row whose temp object *should* already be deleted
+ * by now — see `finalizeMediaUploadSafely` — legitimately explains that
+ * key if the delete itself hasn't happened yet or failed).
+ */
+export async function listAllMediaUploadStorageKeys(tx: AppTx): Promise<string[]> {
+  const tenantId = requireCurrentTenantId();
+  const rows = await tx
+    .select({ storageKey: mediaUploads.storageKey })
+    .from(mediaUploads)
+    .where(eq(mediaUploads.tenantId, tenantId));
+  return rows.map((row) => row.storageKey);
 }
 
 /** Every still-`pending` intent whose TTL has passed — the read half of `cleanupExpiredMediaUploads`. */

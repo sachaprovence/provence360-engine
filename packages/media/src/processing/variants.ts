@@ -1,4 +1,5 @@
 import sharp, { type Sharp } from "sharp";
+import { logger } from "@provence360/observability";
 import {
   type AcceptedImageFormat,
   IMAGE_VARIANT_TOKENS,
@@ -7,6 +8,7 @@ import {
 } from "../domain/constants";
 import type { MediaVariantEntry, MediaVariantsV1 } from "../domain/media-variants";
 import { MEDIA_VARIANTS_VERSION } from "../domain/media-variants";
+import { MediaStorageUnavailableError } from "../errors";
 import { buildVariantStorageKey } from "../upload/object-keys";
 import type { ObjectStorage } from "../storage/object-storage";
 import type { ValidatedImage } from "../validation/image-validation";
@@ -34,7 +36,17 @@ export async function generateImageVariants(
   for (const token of IMAGE_VARIANT_TOKENS) {
     const targetWidth = VARIANT_MAX_WIDTH[token];
     if (source.width <= targetWidth) continue; // never upscale — original already smaller
-    const resized = sharp(bytes).resize({ width: targetWidth, withoutEnlargement: true });
+    // `.rotate()` with no arguments auto-orients from the source's own
+    // EXIF tag before resizing, then strips the (now-redundant) tag from
+    // the output — sharp's standard pattern for this, and required here:
+    // without it, a variant's *pixels* stay in the raw, un-rotated layout
+    // while `source.width`/`.height` (from `validateImageBytes`, already
+    // orientation-corrected) describe the *displayed* layout, so target
+    // dimensions computed from the corrected axis would be applied to the
+    // wrong physical axis, and — because re-encoding here drops the
+    // orientation tag regardless — a viewer would have no way to
+    // recover the correct orientation from the variant it received.
+    const resized = sharp(bytes).rotate().resize({ width: targetWidth, withoutEnlargement: true });
     const buffer = await toFormat(resized, source.format).toBuffer();
     const metadata = await sharp(buffer).metadata();
     if (!metadata.width || !metadata.height) continue;
@@ -54,7 +66,17 @@ export async function storeImageVariants(
   const result: MediaVariantsV1 = { version: MEDIA_VARIANTS_VERSION };
   for (const variant of variants) {
     const storageKey = buildVariantStorageKey(tenantId, mediaAssetId, variant.token);
-    await storage.putObject(storageKey, variant.buffer, { contentType });
+    try {
+      await storage.putObject(storageKey, variant.buffer, { contentType });
+    } catch (error) {
+      logger.warn("media.storage.put_failed", {
+        tenantId,
+        mediaAssetId,
+        variant: variant.token,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new MediaStorageUnavailableError();
+    }
     const entry: MediaVariantEntry = {
       storageKey,
       width: variant.width,

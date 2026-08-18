@@ -19,6 +19,7 @@ export type { MediaVariantEntry, MediaVariantsV1 } from "./domain/media-variants
 export {
   MediaDecodeError,
   MediaObjectMissingError,
+  MediaStorageUnavailableError,
   MediaTooLargeError,
   MediaTypeRejectedError,
   MediaUploadAlreadyFinalizedError,
@@ -61,5 +62,9 @@ export { buildMediaDeliveryUrl, resolveDeliveryStorageKey } from "./delivery/med
 export type { DeliverableAsset, DeliveryVariant } from "./delivery/media-url";
 export { resolveMediaDelivery } from "./delivery/media-delivery-handler";
 export type { MediaDeliveryResult } from "./delivery/media-delivery-handler";
+export { buildMediaDeliveryResponse } from "./delivery/media-response";
 
 export { cleanupExpiredMediaUploads } from "./cleanup";
+
+export { findDbOrphans, findStorageOrphans } from "./reconciliation/orphan-scan";
+export type { DbOrphan, DbOrphanKind, StorageOrphan } from "./reconciliation/orphan-scan";
