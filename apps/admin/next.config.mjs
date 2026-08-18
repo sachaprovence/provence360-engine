@@ -7,6 +7,11 @@ const VIRTUAL_TOUR_FRAME_ORIGINS = ["https://my.matterport.com"];
 const nextConfig = {
   // v1.0: see the identical option in apps/web/next.config.mjs.
   output: "standalone",
+  // v1.0.1 — brief SUJET A: see the matching, fully-explained option in
+  // apps/web/next.config.mjs — same standalone-tracing gap, same fix.
+  outputFileTracingIncludes: {
+    "/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
+  },
   transpilePackages: [
     "@provence360/auth",
     "@provence360/content",

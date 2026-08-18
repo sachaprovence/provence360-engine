@@ -17,6 +17,24 @@ const nextConfig = {
   // image copies only `.next/standalone` + `.next/static`, not the full
   // `node_modules` tree. See docs/DEPLOYMENT.md, "Containerization".
   output: "standalone",
+  // v1.0.1 — brief SUJET A: a real `docker run` of the standalone output
+  // (added this release) crashed with `Cannot find module
+  // '.../@swc/helpers/esm/_interop_require_default.js'`. Root cause:
+  // Next's internal `next/dist/shared/lib/constants.js` does
+  // `require("@swc/helpers/_/_interop_require_default")`, whose
+  // conditional `exports` map resolves to the ESM file under Node 22's
+  // `module-sync` condition at actual runtime — but the standalone
+  // output's file tracer (`@vercel/nft`) doesn't evaluate that condition
+  // and only traces the CJS variant, so the ESM file it actually needs is
+  // silently missing from the copied `node_modules`. Reproduced locally by
+  // running the real standalone `server.js` directly (no Docker needed to
+  // reproduce), confirming it's a genuine tracing gap, not a Docker-layer
+  // issue. Forcing the whole `@swc/helpers` package (both `cjs/` and
+  // `esm/`) into every route's trace closes that gap without guessing at
+  // which specific helper file(s) Node picks at runtime.
+  outputFileTracingIncludes: {
+    "/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
+  },
   // Workspace packages ship raw TypeScript (no build step of their own —
   // see docs/ARCHITECTURE.md on why), so Next has to transpile them itself.
   transpilePackages: [
