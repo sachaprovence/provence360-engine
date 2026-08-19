@@ -27,9 +27,9 @@ describe("parseBootstrapInput — SUJET H production bootstrap", () => {
   });
 
   it("refuses a password shorter than the minimum — never a weak default-strength secret", () => {
-    expect(() =>
-      parseBootstrapInput({ ...VALID_ENV, BOOTSTRAP_OWNER_PASSWORD: "short" }),
-    ).toThrow(/at least 12 characters/);
+    expect(() => parseBootstrapInput({ ...VALID_ENV, BOOTSTRAP_OWNER_PASSWORD: "short" })).toThrow(
+      /at least 12 characters/,
+    );
   });
 
   it(`accepts a password of exactly the minimum length (${MIN_PASSWORD_LENGTH})`, () => {

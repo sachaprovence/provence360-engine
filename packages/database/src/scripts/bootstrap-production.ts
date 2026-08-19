@@ -108,7 +108,9 @@ async function main(): Promise<void> {
   console.log("Bootstrap complete:");
   console.log(`  tenant: ${input.tenantSlug} (${tenant.id})`);
   console.log(`  owner:  ${input.ownerEmail} (${owner.id}) — role: owner`);
-  console.log(`  site:   ${input.siteSlug} (${site.id}) — status: active, no published revision yet`);
+  console.log(
+    `  site:   ${input.siteSlug} (${site.id}) — status: active, no published revision yet`,
+  );
   console.log(`  domain: ${input.domainHostname} (${domain.id}) — status: active`);
   console.log(
     "  Log in to apps/admin with the email/password you provided, then create a Page and publish it.",

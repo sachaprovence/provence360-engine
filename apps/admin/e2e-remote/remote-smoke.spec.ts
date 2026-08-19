@@ -89,7 +89,7 @@ test.describe("Remote deployment smoke test", () => {
 
       const pageName = `Remote Smoke ${marker}`;
       await page.getByLabel("Internal name").fill(pageName);
-      await page.getByLabel("Slug (ignored for \"home\")").fill(slug);
+      await page.getByLabel('Slug (ignored for "home")').fill(slug);
       await page.getByLabel("Type").selectOption(pageType);
       await page.getByRole("button", { name: /create page/i }).click();
       await expect(page.getByText(pageName, { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -131,7 +131,9 @@ test.describe("Remote deployment smoke test", () => {
       // no home page yet, which looked like a slow-to-propagate 404 until
       // it was root-caused; see the "create a page" step above and this
       // release's final report, ANOMALIES DÉCOUVERTES, for that story.)
-      let response = await request.get(pageUrl, { headers: hostHeader ? { host: hostHeader } : {} });
+      let response = await request.get(pageUrl, {
+        headers: hostHeader ? { host: hostHeader } : {},
+      });
       const deadline = Date.now() + 30_000;
       while (response.status() !== 200 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));

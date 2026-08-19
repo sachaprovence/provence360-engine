@@ -19,12 +19,12 @@ their own sections).
 
 Four Railway services in one project:
 
-| Service | Source | Config |
-| --- | --- | --- |
-| `postgres` | Railway's own managed PostgreSQL plugin | provisioned from the Railway dashboard, not from this repo |
-| `provence360-web` | this repo, `apps/web/Dockerfile` | `apps/web/railway.json` |
-| `provence360-admin` | this repo, `apps/admin/Dockerfile` | `apps/admin/railway.json` |
-| `provence360-worker` | this repo, `apps/worker/Dockerfile` | `apps/worker/railway.json` |
+| Service              | Source                                  | Config                                                     |
+| -------------------- | --------------------------------------- | ---------------------------------------------------------- |
+| `postgres`           | Railway's own managed PostgreSQL plugin | provisioned from the Railway dashboard, not from this repo |
+| `provence360-web`    | this repo, `apps/web/Dockerfile`        | `apps/web/railway.json`                                    |
+| `provence360-admin`  | this repo, `apps/admin/Dockerfile`      | `apps/admin/railway.json`                                  |
+| `provence360-worker` | this repo, `apps/worker/Dockerfile`     | `apps/worker/railway.json`                                 |
 
 Each `railway.json` is intentionally small — `build.dockerfilePath` (so
 Railway builds the real Dockerfile, not a Railway-specific Nixpacks/buildpack
@@ -108,7 +108,7 @@ require TLS. If you ever connect over Railway's **public** TCP proxy
 endpoint instead (e.g. running a one-off migration from a laptop, not from
 `railway run`), append `?sslmode=require` to that connection string. Confirm
 which one your migration step is actually using — the answer differs by
-whether it runs *inside* Railway (`railway run`, see below) or *outside* it.
+whether it runs _inside_ Railway (`railway run`, see below) or _outside_ it.
 
 ### Where do `db:migrate`/`db:setup-roles` actually run?
 
@@ -134,8 +134,8 @@ repo's code); `provence360-admin` is a reasonable default since it's the one
 service whose environment already includes `DATABASE_URL_AUTH` too, should a
 future migration script ever need it. Two people running this
 simultaneously would race (Drizzle's own `__drizzle_migrations` tracking
-table make a *second* run a safe no-op once the first completes — but the
-two could still both be applying the *same* not-yet-applied migration at
+table make a _second_ run a safe no-op once the first completes — but the
+two could still both be applying the _same_ not-yet-applied migration at
 the same moment); treat this the same as any other production migration
 step and don't run it concurrently from two terminals.
 
@@ -232,6 +232,7 @@ each Railway service's own Variables (Settings → Variables), not shared
 across services:
 
 **provence360-web**
+
 ```
 NODE_ENV=production
 ROOT_DOMAIN=<see "Domains" below>
@@ -298,6 +299,7 @@ site reachable, no wildcard/subdomain configuration required.)
 **Guarantees, verified for real against a live Postgres database in this
 session** (see this release's final report, BOOTSTRAP PRODUCTION, for the
 exact commands and output):
+
 - idempotent by tenant slug — re-running with the same
   `BOOTSTRAP_TENANT_SLUG` is a safe no-op, not a duplicate or a crash;
 - refuses (exit 1, before touching the database) if any required variable
@@ -377,8 +379,8 @@ risk was already either correct for a reverse-proxy deployment or
 irrelevant to Railway specifically:
 
 - **Cookies** (`apps/admin/lib/session-cookie.ts`) — `secure:
-  process.env.NODE_ENV === "production"`, `sameSite: "lax"`, `httpOnly:
-  true`. Railway terminates TLS at its own edge and the container only ever
+process.env.NODE_ENV === "production"`, `sameSite: "lax"`, `httpOnly:
+true`. Railway terminates TLS at its own edge and the container only ever
   sees plain HTTP from Railway's internal proxy — this is the same "TLS
   terminates upstream, the app itself stays HTTP" model docs/DEPLOYMENT.md's
   "Domains & TLS" section already documents as the expected deployment
@@ -494,14 +496,14 @@ Extends docs/DEPLOYMENT.md's "Rollback" section with what's Railway-specific:
   Railway-specific mechanism for "go back to the previous known-good
   config" that docs/DEPLOYMENT.md's provider-neutral version doesn't name.
   Never paste a secret value into a support ticket, a commit message, or
-  this repo — reference the variable *name*, let Railway's own UI hold the
+  this repo — reference the variable _name_, let Railway's own UI hold the
   value.
 
 ## SUJET M — Backup / Restore on Railway Postgres
 
 docs/BACKUP_RESTORE.md's runbook is provider-neutral by design (`pg_dump`/
 `pg_restore` against any reachable `DATABASE_URL`) and applies to Railway's
-Postgres unchanged — the only Railway-specific fact is *which* connection
+Postgres unchanged — the only Railway-specific fact is _which_ connection
 string to point `backup-db.sh`/`restore-db.sh` at (the schema-owning
 `DATABASE_URL`, from that service's Variables, or Railway's own public proxy
 connection string with `?sslmode=require` if running the scripts from
@@ -509,7 +511,7 @@ outside Railway's network — see "SSL/TLS" above).
 
 **Not executed against Railway in this session** — no Railway Postgres
 instance exists in this development environment to `pg_dump` from. What
-*was* verified (again, for real, not assumed): the scripts themselves,
+_was_ verified (again, for real, not assumed): the scripts themselves,
 end-to-end including the restore script's safety-guard rejection path,
 against this session's local dev database — see docs/BACKUP_RESTORE.md's
 own "Verified" section, unchanged by this release. The Railway-specific
@@ -520,7 +522,7 @@ proxy URL) uses the exact same script, unmodified.
 
 ## SUJET O — CI/CD: still no automatic deploy-on-push
 
-`.github/workflows/ci.yml` is unchanged in what it *validates* by this
+`.github/workflows/ci.yml` is unchanged in what it _validates_ by this
 release (format/lint/typecheck/tests/build/E2E/Docker build/Docker runtime
 smoke — see v1.0.1's own final report for how that last one was built and
 proven). This release does not add a "deploy to Railway on push to main"
