@@ -22,6 +22,8 @@
     "migrate": "tsx src/scripts/migrate.ts",
     "setup-roles": "tsx src/scripts/setup-roles.ts",
     "seed": "tsx src/scripts/seed.ts",
+    "bootstrap-production": "tsx src/scripts/bootstrap-production.ts",
+    "verify-roles": "tsx src/scripts/verify-roles.ts",
     "studio": "drizzle-kit studio"
   },
   "dependencies": {

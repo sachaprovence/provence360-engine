@@ -8,6 +8,12 @@ docs/DEPLOYMENT.md's "Object storage" section, not here — it's the
 provider's responsibility (bucket versioning/lifecycle), not a database
 backup concern.
 
+**v1.0.2**: this runbook is provider-neutral and applies to Railway's
+managed PostgreSQL unchanged — see [docs/RAILWAY.md](RAILWAY.md), "Backup /
+Restore on Railway Postgres" for the one Railway-specific detail (which
+connection string to point these scripts at) and an honest statement of
+what was and wasn't executed against a real Railway database this release.
+
 ## What's backed up
 
 **PostgreSQL only.** A `pg_dump --format=custom` of the whole database —
