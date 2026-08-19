@@ -15,3 +15,5 @@ export { checkDatabaseHealth } from "./health";
 export type { DatabaseHealthResult } from "./health";
 export { assertSeedSafeTarget } from "./seed-safety";
 export type { SeedSafetyEnv } from "./seed-safety";
+export { parseBootstrapInput, MIN_PASSWORD_LENGTH } from "./bootstrap-input";
+export type { BootstrapInput } from "./bootstrap-input";

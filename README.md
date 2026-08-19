@@ -64,6 +64,13 @@ v0.3 documents — [docs/SITE_DOMAIN.md](docs/SITE_DOMAIN.md),
 [docs/PUBLISHING.md](docs/PUBLISHING.md) cover everything since the
 foundation in depth.
 
+For running this in production: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) is
+the provider-neutral model (containerization, health checks, migrations,
+rollback), and [docs/RAILWAY.md](docs/RAILWAY.md) is the concrete,
+copy-pasteable version of it against this repo's first real deployment
+target — Railway (compute + managed PostgreSQL) with Cloudflare R2 (object
+storage).
+
 ## Stack
 
 TypeScript (strict) · pnpm workspaces · Turborepo · Next.js (App Router) ·

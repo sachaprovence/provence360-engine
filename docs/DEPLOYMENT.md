@@ -2,9 +2,11 @@
 
 v1.0 — Production Foundation & Deployment Readiness. See
 [ADR 0023](adr/0023-production-foundation-deployment-model.md) for the
-decisions behind everything here, and
+decisions behind everything here,
 [docs/BACKUP_RESTORE.md](BACKUP_RESTORE.md) for the database backup/restore
-runbook specifically.
+runbook specifically, and (v1.0.2) [docs/RAILWAY.md](RAILWAY.md) for the
+concrete, provider-specific version of this document against Railway +
+Cloudflare R2 — this repo's first real deployment target.
 
 ## What runs where
 
@@ -198,6 +200,15 @@ independent Node processes + two external services":
 
 No specific host (AWS/GCP/Azure/Vercel/Fly.io/Railway/Render/Cloudflare)
 is mandated — the model above works on any of them.
+
+**v1.0.2** — this is no longer purely hypothetical: [docs/RAILWAY.md](RAILWAY.md)
+walks through this exact model against a real target, Railway (compute +
+managed PostgreSQL) with Cloudflare R2 (object storage) — including two new
+scripts this release adds, `pnpm db:verify-roles` (proves the four database
+roles are wired correctly against a real target, not just declared) and
+`pnpm db:bootstrap-production` (creates the first real owner/tenant/site
+without ever touching `db:seed`). Read docs/RAILWAY.md alongside this
+document for the concrete, copy-pasteable version of every step below.
 
 ## Containerization
 
@@ -417,9 +428,16 @@ beyond login) — both stated above rather than discovered silently later.
 7. Run the deployment smoke test (`pnpm --filter @provence360/web run
 smoke:deployment -- --base-url=https://your-domain` — see the script's
    own `--help` for both apps' variants).
-8. Create the first real tenant/user through `apps/admin` — **do not** run
-   `pnpm db:seed` against production; it's a fixture script, not a
-   provisioning tool (see "Migrations" above).
+8. Create the first real tenant/owner/site — **do not** run `pnpm db:seed`
+   against production; it's a fixture script, not a provisioning tool (see
+   "Migrations" above). **v1.0.2** adds the actual provisioning tool:
+   `pnpm db:bootstrap-production` (`packages/database/src/scripts/bootstrap-production.ts`)
+   — a one-shot, operator-driven script (every value supplied via required
+   environment variables, no defaults, idempotent by tenant slug, never
+   logs the password) that creates exactly one owner + tenant + site +
+   initial domain, then exits. See docs/RAILWAY.md, "Bootstrap the first
+   tenant" for the full walkthrough. Log in through `apps/admin` with that
+   owner afterward to create and publish real content.
 
 ### Normal deployment
 
