@@ -9,25 +9,56 @@ export const featureListRendererV1: BlockRenderer<FeatureListProps> = ({ id, pro
     : undefined;
 
   return (
-    <section key={id} data-block="feature-list" style={{ padding: t["spacing.medium"] }}>
+    <section
+      key={id}
+      data-block="feature-list"
+      style={{ padding: `clamp(3rem, 8vw, 7rem) clamp(1.25rem, 5vw, 4rem)` }}
+    >
       {heading ? (
-        <h2 style={{ fontFamily: t["font.heading"], color: t["color.text"] }}>{heading}</h2>
+        <h2
+          style={{
+            fontFamily: t["font.heading"],
+            color: t["color.text"],
+            textAlign: "center",
+            fontSize: "clamp(2rem, 5vw, 3.5rem)",
+            margin: `0 0 ${t["spacing.large"]}`,
+          }}
+        >
+          {heading}
+        </h2>
       ) : null}
-      <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: t["spacing.small"] }}>
+      <ul
+        style={{
+          listStyle: "none",
+          padding: 0,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+          gap: t["spacing.medium"],
+        }}
+      >
         {props.items.map((item, index) => (
           <li
             key={index}
             style={{
-              padding: t["spacing.small"],
-              borderRadius: t["radius.small"],
+              padding: t["spacing.large"],
+              borderRadius: t["radius.large"],
               background: t["color.surface"],
+              border: `1px solid ${t["color.border"]}`,
+              boxShadow: "0 18px 45px rgba(17,24,39,.06)",
             }}
           >
             <strong style={{ fontFamily: t["font.heading"], color: t["color.text"] }}>
               {resolveLocalizedString(item.title, context.locale, context.defaultLocale)}
             </strong>
             {item.description ? (
-              <p style={{ color: t["color.muted"], fontFamily: t["font.body"], margin: 0 }}>
+              <p
+                style={{
+                  color: t["color.muted"],
+                  fontFamily: t["font.body"],
+                  margin: `${t["spacing.small"]} 0 0`,
+                  lineHeight: 1.65,
+                }}
+              >
                 {resolveLocalizedString(item.description, context.locale, context.defaultLocale)}
               </p>
             ) : null}

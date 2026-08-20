@@ -6,6 +6,8 @@ import {
   buttonStyle,
   dangerButtonStyle,
   errorTextStyle,
+  inputStyle,
+  labelStyle,
   secondaryButtonStyle,
   textareaStyle,
 } from "@/lib/form-styles";
@@ -51,6 +53,39 @@ function patchPropsField(propsText: string, key: string, value: unknown): string
   return JSON.stringify(parsed, null, 2);
 }
 
+function readFrenchText(propsText: string, key: string): string {
+  const value = readPropsField(propsText, key);
+  if (!value || typeof value !== "object") return "";
+  const french = (value as Record<string, unknown>).fr;
+  return typeof french === "string" ? french : "";
+}
+
+function patchFrenchText(propsText: string, key: string, value: string): string {
+  return patchPropsField(propsText, key, value.trim() ? { fr: value } : undefined);
+}
+
+function readFeatureLines(propsText: string): string {
+  const value = readPropsField(propsText, "items");
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const title = (item as { title?: { fr?: unknown } }).title?.fr;
+      return typeof title === "string" ? title : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function patchFeatureLines(propsText: string, value: string): string {
+  const items = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((title) => ({ title: { fr: title } }));
+  return patchPropsField(propsText, "items", items);
+}
+
 function BlockPropsForm({
   tenantId,
   siteId,
@@ -84,6 +119,7 @@ function BlockPropsForm({
   const galleryIds = Array.isArray(galleryIdsRaw)
     ? galleryIdsRaw.filter((id): id is string => typeof id === "string")
     : [];
+  const supportsFriendlyText = ["hero", "text", "cta"].includes(block.type);
 
   return (
     <form action={formAction} style={{ display: "grid", gap: 6 }}>
@@ -98,26 +134,105 @@ function BlockPropsForm({
         />
       ) : null}
       {block.type === "gallery" ? (
-        <GalleryMediaPicker
-          label="Images"
-          options={mediaOptions}
-          selectedIds={galleryIds}
-          onChange={(ids) => {
-            setPropsText((current) => patchPropsField(current, "mediaAssetIds", ids));
-          }}
-        />
+        <>
+          <GalleryMediaPicker
+            label="Images"
+            options={mediaOptions}
+            selectedIds={galleryIds}
+            onChange={(ids) => {
+              setPropsText((current) => patchPropsField(current, "mediaAssetIds", ids));
+            }}
+          />
+          <label style={labelStyle}>
+            Légende
+            <input
+              value={readFrenchText(propsText, "caption")}
+              onChange={(event) =>
+                setPropsText((current) => patchFrenchText(current, "caption", event.target.value))
+              }
+              style={inputStyle}
+            />
+          </label>
+        </>
       ) : null}
-      <textarea
-        name="props"
-        value={propsText}
-        onChange={(event) => {
-          setPropsText(event.target.value);
-        }}
-        style={textareaStyle}
-      />
+      {supportsFriendlyText ? (
+        <>
+          <label style={labelStyle}>
+            Titre
+            <input
+              value={readFrenchText(propsText, block.type === "hero" ? "headline" : "heading")}
+              onChange={(event) => setPropsText((current) => patchFrenchText(current, block.type === "hero" ? "headline" : "heading", event.target.value))}
+              style={inputStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            Texte
+            <textarea
+              value={readFrenchText(propsText, block.type === "hero" ? "subheadline" : "body")}
+              onChange={(event) => setPropsText((current) => patchFrenchText(current, block.type === "hero" ? "subheadline" : "body", event.target.value))}
+              style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
+            />
+          </label>
+          {block.type === "hero" || block.type === "cta" ? (
+            <>
+              <label style={labelStyle}>
+                Texte du bouton
+                <input
+                  value={readFrenchText(propsText, block.type === "hero" ? "ctaLabel" : "buttonLabel")}
+                  onChange={(event) => setPropsText((current) => patchFrenchText(current, block.type === "hero" ? "ctaLabel" : "buttonLabel", event.target.value))}
+                  style={inputStyle}
+                />
+              </label>
+              <label style={labelStyle}>
+                Lien du bouton
+                <input
+                  value={(readPropsField(propsText, block.type === "hero" ? "ctaHref" : "buttonHref") as string | undefined) ?? ""}
+                  onChange={(event) => setPropsText((current) => patchPropsField(current, block.type === "hero" ? "ctaHref" : "buttonHref", event.target.value))}
+                  style={inputStyle}
+                />
+              </label>
+            </>
+          ) : null}
+        </>
+      ) : null}
+      {block.type === "feature-list" ? (
+        <>
+          <label style={labelStyle}>
+            Titre de la section
+            <input
+              value={readFrenchText(propsText, "heading")}
+              onChange={(event) =>
+                setPropsText((current) => patchFrenchText(current, "heading", event.target.value))
+              }
+              style={inputStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            Avantages (un par ligne)
+            <textarea
+              value={readFeatureLines(propsText)}
+              onChange={(event) =>
+                setPropsText((current) => patchFeatureLines(current, event.target.value))
+              }
+              style={{ ...inputStyle, minHeight: 110, resize: "vertical" }}
+            />
+          </label>
+        </>
+      ) : null}
+      <input type="hidden" name="props" value={propsText} />
+      <details>
+        <summary style={{ cursor: "pointer", fontSize: 13 }}>Réglages avancés (JSON)</summary>
+        <textarea
+          value={propsText}
+          onChange={(event) => {
+            setPropsText(event.target.value);
+          }}
+          style={{ ...textareaStyle, marginTop: 8 }}
+        />
+      </details>
       <div>
         <button type="submit" disabled={isPending} style={buttonStyle}>
-          {isPending ? "Saving…" : "Save props"}
+          {isPending ? "Enregistrement…" : "Enregistrer"}
         </button>
       </div>
       {state.error ? (
@@ -175,7 +290,7 @@ export function BlocksEditor({
   }
 
   if (blocks.length === 0) {
-    return <p style={{ color: "#6b7280", fontSize: 14 }}>No blocks yet.</p>;
+    return <p style={{ color: "#6b7280", fontSize: 14 }}>Aucun bloc pour le moment.</p>;
   }
 
   return (
@@ -223,7 +338,7 @@ export function BlocksEditor({
                   }}
                   style={dangerButtonStyle}
                 >
-                  Remove
+                  Supprimer
                 </button>
               </div>
             ) : null}

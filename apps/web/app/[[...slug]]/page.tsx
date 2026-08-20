@@ -51,15 +51,18 @@ export default async function SitePage({ params }: SitePageProps) {
         background: tokens["color.background"],
         color: tokens["color.text"],
         minHeight: "100vh",
+        fontFamily: tokens["font.body"],
       }}
     >
-      {nav || logo ? (
+      {nav || logo || branding.brand.name ? (
         <header
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
             gap: tokens["spacing.medium"],
-            padding: tokens["spacing.medium"],
+            padding: `${tokens["spacing.medium"]} clamp(1.25rem, 5vw, 4rem)`,
             maxWidth: tokens["container.wide"],
             margin: "0 auto",
           }}
@@ -75,20 +78,37 @@ export default async function SitePage({ params }: SitePageProps) {
               alt={logo.altText ?? branding.brand.name ?? snapshot.site.name}
               style={{ height: 40, width: "auto" }}
             />
-          ) : null}
+          ) : (
+            <a
+              href="/"
+              style={{
+                color: tokens["color.text"],
+                fontFamily: tokens["font.heading"],
+                fontSize: "1.25rem",
+                fontWeight: 800,
+                letterSpacing: "-0.025em",
+                textDecoration: "none",
+              }}
+            >
+              {branding.brand.name ?? snapshot.site.publicName ?? snapshot.site.name}
+            </a>
+          )}
           {nav}
         </header>
       ) : null}
-      <div style={{ maxWidth: tokens["container.wide"], margin: "0 auto" }}>{elements}</div>
+      <div style={{ maxWidth: tokens["container.wide"], margin: "0 auto", overflow: "hidden" }}>
+        {elements}
+      </div>
       <footer
         style={{
           textAlign: "center",
-          padding: tokens["spacing.medium"],
+          padding: `${tokens["spacing.large"]} ${tokens["spacing.medium"]}`,
           color: tokens["color.muted"],
-          fontSize: 12,
+          fontSize: 14,
+          borderTop: `1px solid ${tokens["color.border"]}`,
         }}
       >
-        {snapshot.site.publicName ?? snapshot.site.name} — Provence360 Engine
+        © {new Date().getFullYear()} {snapshot.site.publicName ?? snapshot.site.name}
       </footer>
     </main>
   );

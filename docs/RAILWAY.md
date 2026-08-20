@@ -556,3 +556,20 @@ Railway's log view by `level":"error"` or `level":"warn"` for a quick first
 look during an incident; no Railway-specific log-drain/export configuration
 was added, since none was requested and none is needed for this first
 deployment's operational maturity level.
+
+## v1.1 — Populate an empty production site
+
+The production account bootstrap intentionally remains separate from site
+content. After `db:bootstrap-production`, run the following once from the
+worker service with the same `BOOTSTRAP_*` variables:
+
+```sh
+pnpm db:bootstrap-site-content
+```
+
+This command creates an active Home page and Contact page only when they do
+not exist, fills an existing Home page only when it has no blocks, configures
+French site settings and navigation, then publishes through the normal
+immutable-revision pipeline. It never overwrites authored page content and
+is safe to run again. Remove the temporary `BOOTSTRAP_*` variables after a
+successful run. Do not put their values in logs, tickets, commits, or chat.

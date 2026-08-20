@@ -46,7 +46,13 @@ function NavigationItem({
         {...(item.target.kind === "external" && item.target.newTab
           ? { target: "_blank", rel: "noopener noreferrer" }
           : {})}
-        style={{ color: t["color.text"], fontFamily: t["font.body"], textDecoration: "none" }}
+        style={{
+          color: t["color.text"],
+          fontFamily: t["font.body"],
+          textDecoration: "none",
+          fontWeight: 600,
+          padding: `${t["spacing.small"]} 0`,
+        }}
       >
         {label}
       </a>
@@ -80,6 +86,7 @@ export function renderNavigation(
         style={{
           listStyle: "none",
           display: "flex",
+          flexWrap: "wrap",
           gap: context.tokens["spacing.medium"],
           margin: 0,
           padding: 0,
