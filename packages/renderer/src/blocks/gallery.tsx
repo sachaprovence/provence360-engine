@@ -18,12 +18,16 @@ export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props
   const byId = await resolveMediaDescriptors(props.mediaAssetIds, context);
 
   return (
-    <section key={id} data-block="gallery" style={{ padding: t["spacing.medium"] }}>
+    <section
+      key={id}
+      data-block="gallery"
+      style={{ padding: `clamp(3rem, 8vw, 7rem) clamp(1.25rem, 5vw, 4rem)` }}
+    >
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          gap: t["spacing.small"],
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+          gap: t["spacing.medium"],
         }}
       >
         {props.mediaAssetIds.map((mediaAssetId) => {
@@ -45,7 +49,13 @@ export const galleryRendererV1: BlockRenderer<GalleryProps> = async ({ id, props
               height={image.height ?? undefined}
               loading="lazy"
               alt={asset.altText ?? ""}
-              style={{ width: "100%", borderRadius: t["radius.medium"], objectFit: "cover" }}
+              style={{
+                width: "100%",
+                aspectRatio: "4 / 3",
+                borderRadius: t["radius.large"],
+                objectFit: "cover",
+                boxShadow: "0 20px 50px rgba(17,24,39,.12)",
+              }}
             />
           );
         })}

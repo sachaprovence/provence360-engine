@@ -18,11 +18,36 @@ export const textRendererV1: BlockRenderer<TextProps> = ({ id, props, context })
     <section
       key={id}
       data-block="text"
-      style={{ padding: t["spacing.medium"], color: t["color.text"] }}
+      style={{
+        padding: `clamp(3rem, 8vw, 7rem) clamp(1.25rem, 6vw, 5rem)`,
+        color: t["color.text"],
+        maxWidth: "68rem",
+        margin: "0 auto",
+      }}
     >
-      {heading ? <h2 style={{ fontFamily: t["font.heading"], marginTop: 0 }}>{heading}</h2> : null}
+      {heading ? (
+        <h2
+          style={{
+            fontFamily: t["font.heading"],
+            marginTop: 0,
+            fontSize: "clamp(2rem, 5vw, 3.75rem)",
+            lineHeight: 1.08,
+            letterSpacing: "-0.035em",
+          }}
+        >
+          {heading}
+        </h2>
+      ) : null}
       {body.split("\n").map((paragraph, index) => (
-        <p key={index} style={{ fontFamily: t["font.body"] }}>
+        <p
+          key={index}
+          style={{
+            fontFamily: t["font.body"],
+            fontSize: "clamp(1rem, 1.6vw, 1.2rem)",
+            lineHeight: 1.8,
+            color: t["color.muted"],
+          }}
+        >
           {paragraph}
         </p>
       ))}

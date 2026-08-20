@@ -26,25 +26,42 @@ export const ctaRendererV1: BlockRenderer<CtaProps> = ({ id, props, context }) =
       key={id}
       data-block="cta"
       style={{
-        padding: t["spacing.large"],
-        borderRadius: t["radius.medium"],
+        margin: `clamp(2rem, 6vw, 5rem) clamp(1rem, 5vw, 4rem)`,
+        padding: `clamp(3rem, 8vw, 6rem) clamp(1.5rem, 6vw, 5rem)`,
+        borderRadius: t["radius.large"],
         background: t["color.accent"],
         color: t["color.primaryContrast"],
         textAlign: "center",
       }}
     >
-      {heading ? <h2 style={{ fontFamily: t["font.heading"], marginTop: 0 }}>{heading}</h2> : null}
-      {body ? <p style={{ fontFamily: t["font.body"] }}>{body}</p> : null}
+      {heading ? (
+        <h2
+          style={{
+            fontFamily: t["font.heading"],
+            marginTop: 0,
+            fontSize: "clamp(2rem, 5vw, 3.75rem)",
+          }}
+        >
+          {heading}
+        </h2>
+      ) : null}
+      {body ? (
+        <p style={{ fontFamily: t["font.body"], fontSize: "1.1rem", lineHeight: 1.7 }}>
+          {body}
+        </p>
+      ) : null}
       <a
         href={props.buttonHref}
         style={{
           display: "inline-block",
-          padding: `${t["spacing.small"]} ${t["spacing.medium"]}`,
+          marginTop: t["spacing.medium"],
+          padding: `.9rem ${t["spacing.large"]}`,
           background: buttonStyle.background,
           color: buttonStyle.color,
           border: buttonStyle.border,
-          borderRadius: t["radius.small"],
+          borderRadius: "999px",
           textDecoration: "none",
+          fontWeight: 700,
         }}
       >
         {buttonLabel}
